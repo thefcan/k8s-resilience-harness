@@ -1,0 +1,11 @@
+# kind cluster topology for k8s-resilience-harness.
+#
+# One control-plane + two workers. Multiple workers are intentional: later
+# milestones (M3) exercise `node cordon/drain`, which only makes sense when
+# pods can be rescheduled onto a surviving node.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+  - role: worker
+  - role: worker

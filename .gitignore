@@ -1,0 +1,23 @@
+# Build artifacts
+/bin/
+*.exe
+
+# Test / coverage output
+*.out
+coverage.*
+
+# Experiment run outputs (keep samples explicitly with `git add -f`)
+/results/*
+!/results/.gitkeep
+!/results/*.sample.json
+
+# Local env / editor
+.env
+.DS_Store
+.idea/
+.vscode/
+
+# Python analysis (later milestones)
+analysis/.venv/
+__pycache__/
+*.pyc

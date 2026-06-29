@@ -1,0 +1,23 @@
+# golangci-lint v2 configuration.
+# Default linters (errcheck, govet, ineffassign, staticcheck, unused) stay on;
+# a few extra correctness/style linters are enabled below.
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - revive
+    - misspell
+    - unconvert
+    - bodyclose
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/thefcan/k8s-resilience-harness
