@@ -1,45 +1,35 @@
 #!/usr/bin/env bash
-# Measure the steady-state baseline: port-forward the testapp Service, drive a
-# constant request rate with loadgen, and write a JSON report to results/.
+# Measure the steady-state baseline: drive a constant request rate at the
+# testapp Service (via the kind-published NodePort, load-balanced across all
+# replicas) and write a JSON report to results/.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-NS="${NAMESPACE:-kresil}"
 RPS="${RPS:-50}"
 DURATION="${DURATION:-30s}"
-LOCAL_PORT="${LOCAL_PORT:-18080}"
+NODE_PORT="${NODE_PORT:-30080}"
+HOST="${HOST:-localhost}"
 OUT="${OUT:-${ROOT}/results/baseline.json}"
 
-PF_PID=""
-cleanup() {
-  if [[ -n "${PF_PID}" ]]; then
-    kill "${PF_PID}" >/dev/null 2>&1 || true
-    wait "${PF_PID}" 2>/dev/null || true
-  fi
-}
-trap cleanup EXIT
+BASE_URL="http://${HOST}:${NODE_PORT}"
 
-echo "==> port-forwarding svc/testapp ${LOCAL_PORT}->80"
-kubectl -n "${NS}" port-forward svc/testapp "${LOCAL_PORT}:80" >/dev/null 2>&1 &
-PF_PID=$!
-
-echo "==> waiting for the forward to accept traffic"
+echo "==> waiting for testapp to accept traffic at ${BASE_URL}"
 ready=false
 for _ in $(seq 1 40); do
-  if curl -sf "http://localhost:${LOCAL_PORT}/livez" >/dev/null 2>&1; then
+  if curl -sf "${BASE_URL}/livez" >/dev/null 2>&1; then
     ready=true
     break
   fi
   sleep 0.5
 done
 if [[ "${ready}" != "true" ]]; then
-  echo "error: testapp did not become reachable via port-forward" >&2
+  echo "error: testapp is not reachable at ${BASE_URL} (is the cluster up and deployed?)" >&2
   exit 1
 fi
 
 echo "==> running loadgen baseline (${RPS} rps for ${DURATION})"
 ( cd "${ROOT}" && go run ./loadgen \
-    -target "http://localhost:${LOCAL_PORT}/work" \
+    -target "${BASE_URL}/work" \
     -rps "${RPS}" \
     -duration "${DURATION}" \
     -out "${OUT}" )

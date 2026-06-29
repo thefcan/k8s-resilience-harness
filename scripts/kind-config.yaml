@@ -3,9 +3,18 @@
 # One control-plane + two workers. Multiple workers are intentional: later
 # milestones (M3) exercise `node cordon/drain`, which only makes sense when
 # pods can be rescheduled onto a surviving node.
+#
+# The control-plane publishes NodePort 30080 to the host so loadgen can drive
+# the testapp Service from outside the cluster. Unlike `kubectl port-forward`,
+# a NodePort is load-balanced by kube-proxy across all ready endpoints and is
+# re-routed when a pod is killed — which is exactly what M2 needs.
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 nodes:
   - role: control-plane
+    extraPortMappings:
+      - containerPort: 30080
+        hostPort: 30080
+        protocol: TCP
   - role: worker
   - role: worker

@@ -26,6 +26,7 @@ func newTestServer(t *testing.T) (*server, *miniredis.Miniredis) {
 	t.Cleanup(func() { _ = rdb.Close() })
 
 	srv := &server{rdb: rdb, host: "test-pod", log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	srv.ready.Store(true)
 	return srv, mr
 }
 
@@ -57,6 +58,20 @@ func TestHealthzReflectsRedis(t *testing.T) {
 	mr.Close() // simulate backend outage
 	if rec := doGET(t, srv.routes(), "/healthz"); rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("/healthz with Redis down = %d, want 503", rec.Code)
+	}
+}
+
+func TestHealthzDrainsOnShutdown(t *testing.T) {
+	srv, _ := newTestServer(t)
+	srv.ready.Store(false) // simulate post-SIGTERM drain
+
+	rec := doGET(t, srv.routes(), "/healthz")
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("/healthz while draining = %d, want 503", rec.Code)
+	}
+	// Liveness must stay green during drain so Kubernetes does not kill us early.
+	if live := doGET(t, srv.routes(), "/livez"); live.Code != http.StatusOK {
+		t.Fatalf("/livez while draining = %d, want 200", live.Code)
 	}
 }
 

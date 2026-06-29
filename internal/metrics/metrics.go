@@ -8,6 +8,7 @@ package metrics
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"time"
 )
@@ -75,7 +76,7 @@ func percentile(sorted []time.Duration, p float64) time.Duration {
 		p = 100
 	}
 	// nearest-rank: rank = ceil(p/100 * N), 1-based.
-	rank := int((p/100)*float64(len(sorted)) + 0.999999)
+	rank := int(math.Ceil((p / 100) * float64(len(sorted))))
 	if rank < 1 {
 		rank = 1
 	}

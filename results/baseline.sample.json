@@ -1,17 +1,19 @@
 {
-  "target": "http://localhost:18080/work",
+  "target": "http://localhost:30080/work",
   "requested_rps": 50,
-  "duration_sec": 20.001152583,
+  "duration_sec": 20.002964791,
   "concurrency": 20,
-  "achieved_rps": 49.947121589837835,
+  "requests": 1000,
+  "saturated": 0,
+  "achieved_rps": 49.99258912108535,
   "summary": {
-    "total": 999,
-    "succeeded": 999,
+    "total": 1000,
+    "succeeded": 1000,
     "failed": 0,
     "success_rate": 1,
-    "p50_ms": 4.009833,
-    "p95_ms": 10.918459,
-    "p99_ms": 25.550917,
-    "max_ms": 73.325416
+    "p50_ms": 2.433292,
+    "p95_ms": 5.981666,
+    "p99_ms": 8.137625,
+    "max_ms": 18.971125
   }
 }

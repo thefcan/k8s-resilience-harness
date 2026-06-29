@@ -37,7 +37,9 @@ type Report struct {
 	RequestedRPS int             `json:"requested_rps"`
 	DurationSec  float64         `json:"duration_sec"`
 	Concurrency  int             `json:"concurrency"`
-	AchievedRPS  float64         `json:"achieved_rps"`
+	Requests     int             `json:"requests"`     // real HTTP attempts
+	Saturated    int             `json:"saturated"`    // ticks dropped (pool full)
+	AchievedRPS  float64         `json:"achieved_rps"` // real requests per second
 	Summary      metrics.Summary `json:"summary"`
 }
 
@@ -45,6 +47,14 @@ type Report struct {
 type Generator struct {
 	cfg    Config
 	client *http.Client
+}
+
+// runResult separates real HTTP attempts from synthetic saturation markers so
+// the achieved rate reflects requests actually sent, not ticks emitted.
+type runResult struct {
+	samples   []metrics.Sample // one per dispatched tick (requests + saturated)
+	requests  int              // real HTTP attempts
+	saturated int              // ticks dropped because the worker pool was full
 }
 
 func newGenerator(cfg Config) *Generator {
@@ -61,13 +71,15 @@ func newGenerator(cfg Config) *Generator {
 }
 
 // Run dispatches requests at the configured constant rate until the duration
-// elapses or ctx is cancelled, returning one Sample per dispatched request.
+// elapses or ctx is cancelled. It returns one sample per tick plus a count of
+// real requests vs. saturation markers, so the achieved rate reflects requests
+// actually sent.
 //
 // Pacing is decoupled from execution: a ticker emits at the target rate and
 // hands work to a bounded worker pool. If every worker is busy when a tick
-// fires, that tick is recorded as a failed (overloaded) sample rather than
-// blocking — so the achieved rate stays honest and saturation is visible.
-func (g *Generator) Run(ctx context.Context) []metrics.Sample {
+// fires, that tick is recorded as a failed (saturated) sample rather than
+// blocking — so saturation is visible instead of silently slowing the rate.
+func (g *Generator) Run(ctx context.Context) runResult {
 	// dispatchCtx bounds how long we *start* new requests. Requests already
 	// in flight use the parent ctx so they finish (or hit their own timeout)
 	// instead of being cancelled the instant the duration elapses.
@@ -103,6 +115,7 @@ func (g *Generator) Run(ctx context.Context) []metrics.Sample {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
+	saturated := 0
 loop:
 	for {
 		select {
@@ -112,7 +125,8 @@ loop:
 			select {
 			case jobs <- struct{}{}:
 			default:
-				results <- metrics.Sample{OK: false} // pool saturated
+				results <- metrics.Sample{OK: false} // pool saturated: no request sent
+				saturated++
 			}
 		}
 	}
@@ -121,7 +135,7 @@ loop:
 	workers.Wait() // all in-flight requests done sending
 	close(results) // collector drains the tail, then signals
 	<-collected
-	return samples
+	return runResult{samples: samples, requests: len(samples) - saturated, saturated: saturated}
 }
 
 func (g *Generator) doRequest(ctx context.Context) metrics.Sample {
@@ -163,8 +177,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if cfg.RPS < 1 {
-		return fmt.Errorf("rps must be >= 1, got %d", cfg.RPS)
+	if cfg.RPS < 1 || cfg.RPS > 1_000_000 {
+		return fmt.Errorf("rps must be in [1, 1000000], got %d", cfg.RPS)
 	}
 	if cfg.Concurrency < 1 {
 		return fmt.Errorf("concurrency must be >= 1, got %d", cfg.Concurrency)
@@ -178,7 +192,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 
 	gen := newGenerator(cfg)
 	started := time.Now()
-	samples := gen.Run(ctx)
+	res := gen.Run(ctx)
 	elapsed := time.Since(started)
 
 	report := Report{
@@ -186,12 +200,14 @@ func run(args []string, stdout, stderr io.Writer) error {
 		RequestedRPS: cfg.RPS,
 		DurationSec:  elapsed.Seconds(),
 		Concurrency:  cfg.Concurrency,
-		AchievedRPS:  float64(len(samples)) / elapsed.Seconds(),
-		Summary:      metrics.Summarize(samples),
+		Requests:     res.requests,
+		Saturated:    res.saturated,
+		AchievedRPS:  float64(res.requests) / elapsed.Seconds(),
+		Summary:      metrics.Summarize(res.samples),
 	}
 
-	_, _ = fmt.Fprintf(stdout, "\nBaseline report\n---------------\n%s\nachieved_rps=%.1f over %.1fs\n",
-		report.Summary.String(), report.AchievedRPS, report.DurationSec)
+	_, _ = fmt.Fprintf(stdout, "\nBaseline report\n---------------\n%s\nachieved_rps=%.1f saturated=%d over %.1fs\n",
+		report.Summary.String(), report.AchievedRPS, report.Saturated, report.DurationSec)
 
 	if outPath != "" {
 		if err := writeReport(outPath, report); err != nil {

@@ -102,17 +102,24 @@ results/              # run outputs (baseline.json, ...)
 ## Architecture (M1)
 
 ```text
-   loadgen ──(constant RPS, /work)──► testapp ×3 ──(INCR)──► Redis (StatefulSet)
-      │                                  ▲
-      └─ records success rate + p50/p95/p99 ─┘
+   loadgen ──(constant RPS, /work)──► NodePort :30080 ──► testapp ×3 ──(INCR)──► Redis
+      │                               (kube-proxy LB)        ▲
+      └─ records success rate + p50/p95/p99 ─────────────────┘
                   │
                   └─► results/baseline.json   (the steady-state baseline)
 ```
 
 - **`testapp`** — `/livez` (liveness, independent of Redis), `/healthz`
-  (readiness, reflects Redis reachability), `/work` (atomic Redis INCR).
+  (readiness, reflects Redis reachability + drains on SIGTERM), `/work` (atomic
+  Redis INCR). Generic error bodies; details are logged server-side.
+- **NodePort, not port-forward** — load is driven through a kind-published
+  NodePort so kube-proxy load-balances across all three replicas and re-routes
+  around a killed pod. A graceful drain (fail readiness, wait, then shut down)
+  keeps pod deletion from producing spurious connection errors — both needed
+  for honest M2 fault measurements.
 - **`loadgen`** — paced ticker + bounded worker pool; in-flight requests are not
-  cancelled when the duration elapses, so the achieved rate stays honest.
+  cancelled when the duration elapses. Pool saturation is counted separately, so
+  `achieved_rps` reflects requests actually sent, not ticks emitted.
 - **`internal/metrics`** — latency percentiles use nearest-rank over *successful*
   requests only; reused by the in-fault probe in M2.
 
@@ -124,10 +131,12 @@ A real run (`make baseline`, 50 rps for 20s) against the kind deployment — see
 ```json
 {
   "requested_rps": 50,
-  "achieved_rps": 49.9,
+  "requests": 1000,
+  "saturated": 0,
+  "achieved_rps": 50.0,
   "summary": {
-    "total": 999, "succeeded": 999, "failed": 0, "success_rate": 1,
-    "p50_ms": 4.0, "p95_ms": 10.9, "p99_ms": 25.6, "max_ms": 73.3
+    "total": 1000, "succeeded": 1000, "failed": 0, "success_rate": 1,
+    "p50_ms": 2.4, "p95_ms": 6.0, "p99_ms": 8.1, "max_ms": 19.0
   }
 }
 ```

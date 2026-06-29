@@ -27,19 +27,26 @@ func TestGeneratorAllSuccess(t *testing.T) {
 		Concurrency: 10,
 		Timeout:     time.Second,
 	})
-	samples := gen.Run(context.Background())
+	res := gen.Run(context.Background())
 
-	if len(samples) == 0 {
+	if len(res.samples) == 0 {
 		t.Fatal("expected some samples, got 0")
 	}
-	for _, s := range samples {
+	for _, s := range res.samples {
 		if !s.OK {
 			t.Fatalf("expected all samples OK against a 200 server, got a failure: %+v", s)
 		}
 	}
 	// Roughly rps * duration; allow generous slack for scheduling jitter.
-	if len(samples) < 10 {
-		t.Fatalf("dispatched too few requests: %d", len(samples))
+	if len(res.samples) < 10 {
+		t.Fatalf("dispatched too few requests: %d", len(res.samples))
+	}
+	// A fast 200 server should not saturate a 10-worker pool at 100 rps.
+	if res.saturated != 0 {
+		t.Fatalf("unexpected saturation against a fast server: %d", res.saturated)
+	}
+	if res.requests != len(res.samples) {
+		t.Fatalf("requests (%d) should equal samples (%d) with no saturation", res.requests, len(res.samples))
 	}
 }
 
@@ -63,7 +70,7 @@ func TestGeneratorHighVolumeDoesNotDeadlock(t *testing.T) {
 	})
 
 	done := make(chan int, 1)
-	go func() { done <- len(gen.Run(context.Background())) }()
+	go func() { done <- len(gen.Run(context.Background()).samples) }()
 
 	select {
 	case n := <-done:
@@ -88,11 +95,11 @@ func TestGeneratorCountsNon200AsFailure(t *testing.T) {
 		Concurrency: 5,
 		Timeout:     time.Second,
 	})
-	samples := gen.Run(context.Background())
-	if len(samples) == 0 {
+	res := gen.Run(context.Background())
+	if len(res.samples) == 0 {
 		t.Fatal("expected some samples, got 0")
 	}
-	for _, s := range samples {
+	for _, s := range res.samples {
 		if s.OK {
 			t.Fatal("expected all samples to fail against a 503 server")
 		}
