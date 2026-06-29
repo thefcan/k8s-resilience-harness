@@ -1,0 +1,17 @@
+{
+  "target": "http://localhost:18080/work",
+  "requested_rps": 50,
+  "duration_sec": 20.001152583,
+  "concurrency": 20,
+  "achieved_rps": 49.947121589837835,
+  "summary": {
+    "total": 999,
+    "succeeded": 999,
+    "failed": 0,
+    "success_rate": 1,
+    "p50_ms": 4.009833,
+    "p95_ms": 10.918459,
+    "p99_ms": 25.550917,
+    "max_ms": 73.325416
+  }
+}

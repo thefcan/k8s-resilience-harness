@@ -1,0 +1,15 @@
+# Headless service: gives the StatefulSet stable DNS (redis.kresil.svc) and
+# lets testapp reach Redis at "redis:6379" within the namespace.
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: kresil
+spec:
+  clusterIP: None
+  selector:
+    app: redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis

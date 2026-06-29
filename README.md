@@ -22,16 +22,17 @@ so resilience becomes a CI gate rather than a hope.
 
 ## Status
 
-**Milestone M0 — skeleton + cluster bring-up — ✅ done.**
+**Milestone M1 — SUT + loadgen + baseline — ✅ done.**
 
-A reproducible local [`kind`](https://kind.sigs.k8s.io/) cluster that comes up
-and tears down cleanly, a Go CLI skeleton with structured logging, linting, and
-a green CI that brings the cluster up and down. Fault injection and verdicts
-arrive in later milestones.
+A multi-replica HTTP service (`testapp`) backed by a Redis StatefulSet is
+deployed into a local [`kind`](https://kind.sigs.k8s.io/) cluster via kustomize,
+and a constant-rate load generator (`loadgen`) measures the steady-state
+baseline — success rate and latency percentiles. Fault injection and pass/fail
+verdicts arrive in M2.
 
 ```text
 M0  skeleton + kind cluster bring-up        ✅ done
-M1  SUT + loadgen + baseline steady-state   ⬜ planned
+M1  SUT + loadgen + baseline steady-state   ✅ done
 M2  pod-kill injector + verdict + report    ⬜ planned   (first CV-able artifact)
 M3  node-drain + resource + network faults  ⬜ planned
 M4  Prometheus metrics platform             ⬜ planned
@@ -52,11 +53,15 @@ M6  polish: README, diagram, docs           ⬜ planned
 ## Quickstart
 
 ```bash
-# Bring up the local kind cluster (1 control-plane + 2 workers)
-make cluster-up
+# Full M1 demo in one command:
+#   kind cluster -> build/load image -> deploy -> measure baseline
+make demo
 
-# Build & run the CLI skeleton (M0: prints a startup banner)
-make run
+# ...or step by step:
+make cluster-up        # 1 control-plane + 2 workers
+make images            # build testapp image, load into kind
+make deploy            # apply manifests, wait for Redis + testapp
+make baseline          # port-forward + loadgen -> results/baseline.json
 
 # Lint + unit tests with the race detector
 make lint
@@ -66,25 +71,65 @@ make test
 make cluster-down
 ```
 
-Run `make help` to list all targets.
+Run `make help` to list all targets. The baseline run is tunable via env:
+`RPS=100 DURATION=60s make baseline`.
 
 ---
 
 ## Layout
 
 ```text
-cmd/harness/          # CLI entrypoint
+cmd/harness/          # harness CLI entrypoint
+testapp/              # SUT: multi-replica HTTP service (/livez, /healthz, /work) + Dockerfile
+loadgen/              # constant-RPS load generator -> baseline report
 internal/
   buildinfo/          # version metadata (ldflags-stamped)
   logger/             # structured slog logger (text/json, levels)
+  metrics/            # success rate + latency percentiles (shared)
+deploy/base/          # kustomize: namespace, Redis StatefulSet, testapp Deployment
 scripts/
   kind-config.yaml    # kind cluster topology
   cluster-up.sh       # create/reuse the local cluster
   cluster-down.sh     # delete the local cluster
-deploy/               # kustomize manifests              (M1+)
+  build-images.sh     # build testapp image + kind load
+  deploy.sh           # kubectl apply -k + wait for rollout
+  baseline.sh         # port-forward + loadgen -> results/baseline.json
 experiments/          # declarative experiment YAML       (M2+)
-results/              # run outputs                        (M2+)
-.github/workflows/    # CI: lint+test, kind up/down
+results/              # run outputs (baseline.json, ...)
+.github/workflows/    # CI: lint+test, integration (deploy + baseline)
+```
+
+## Architecture (M1)
+
+```text
+   loadgen ──(constant RPS, /work)──► testapp ×3 ──(INCR)──► Redis (StatefulSet)
+      │                                  ▲
+      └─ records success rate + p50/p95/p99 ─┘
+                  │
+                  └─► results/baseline.json   (the steady-state baseline)
+```
+
+- **`testapp`** — `/livez` (liveness, independent of Redis), `/healthz`
+  (readiness, reflects Redis reachability), `/work` (atomic Redis INCR).
+- **`loadgen`** — paced ticker + bounded worker pool; in-flight requests are not
+  cancelled when the duration elapses, so the achieved rate stays honest.
+- **`internal/metrics`** — latency percentiles use nearest-rank over *successful*
+  requests only; reused by the in-fault probe in M2.
+
+### Example baseline report
+
+A real run (`make baseline`, 50 rps for 20s) against the kind deployment — see
+[`results/baseline.sample.json`](results/baseline.sample.json):
+
+```json
+{
+  "requested_rps": 50,
+  "achieved_rps": 49.9,
+  "summary": {
+    "total": 999, "succeeded": 999, "failed": 0, "success_rate": 1,
+    "p50_ms": 4.0, "p95_ms": 10.9, "p99_ms": 25.6, "max_ms": 73.3
+  }
+}
 ```
 
 ## CI
@@ -92,8 +137,10 @@ results/              # run outputs                        (M2+)
 GitHub Actions runs two jobs on every push/PR:
 
 - **lint + unit tests** — `golangci-lint`, `go test -race ./...`, `go build`.
-- **kind cluster bring-up / tear-down** — installs `kind`, runs the project's
-  own `cluster-up.sh` / `cluster-down.sh` scripts against a real cluster.
+- **integration (kind deploy + baseline)** — installs `kind`, builds and loads
+  the image, deploys via the project's own scripts, measures the baseline, and
+  **fails the build if the steady-state success rate drops below 95%**. The
+  baseline report is uploaded as an artifact.
 
 ## License
 

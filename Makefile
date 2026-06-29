@@ -41,6 +41,21 @@ cluster-up: ## Create (or reuse) the local kind cluster.
 cluster-down: ## Delete the local kind cluster.
 	bash scripts/cluster-down.sh
 
+.PHONY: images
+images: ## Build the testapp image and load it into kind.
+	bash scripts/build-images.sh
+
+.PHONY: deploy
+deploy: ## Apply manifests and wait for Redis + testapp rollout.
+	bash scripts/deploy.sh
+
+.PHONY: baseline
+baseline: ## Port-forward + run loadgen, write results/baseline.json.
+	bash scripts/baseline.sh
+
+.PHONY: demo
+demo: cluster-up images deploy baseline ## One command: cluster -> image -> deploy -> baseline.
+
 .PHONY: clean
 clean: ## Remove build artifacts.
 	rm -rf bin/

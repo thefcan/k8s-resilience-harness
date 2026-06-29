@@ -1,0 +1,14 @@
+# Stable in-cluster endpoint for the SUT. loadgen reaches it via
+# `kubectl port-forward svc/testapp` from the host during baseline runs.
+apiVersion: v1
+kind: Service
+metadata:
+  name: testapp
+  namespace: kresil
+spec:
+  selector:
+    app: testapp
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

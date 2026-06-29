@@ -37,11 +37,16 @@ jobs:
       - name: Build
         run: go build ./...
 
-  cluster:
-    name: kind cluster bring-up / tear-down
+  integration:
+    name: integration (kind deploy + baseline)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
 
       - name: Install kind
         run: |
@@ -53,10 +58,33 @@ jobs:
       - name: Cluster up
         run: bash scripts/cluster-up.sh
 
-      - name: Show cluster state
+      - name: Build + load testapp image
+        run: bash scripts/build-images.sh
+
+      - name: Deploy SUT (Redis + testapp)
+        run: bash scripts/deploy.sh
+
+      - name: Measure steady-state baseline
+        env:
+          RPS: "50"
+          DURATION: "15s"
+        run: bash scripts/baseline.sh
+
+      - name: Gate on baseline success rate
         run: |
-          kubectl get nodes -o wide
-          kubectl get pods -A
+          cat results/baseline.json
+          rate=$(jq -r '.summary.success_rate' results/baseline.json)
+          echo "baseline success_rate = ${rate}"
+          awk -v r="${rate}" 'BEGIN { exit (r >= 0.95 ? 0 : 1) }' \
+            || { echo "::error::baseline success_rate ${rate} < 0.95"; exit 1; }
+
+      - name: Upload baseline report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: baseline-report
+          path: results/baseline.json
+          if-no-files-found: warn
 
       - name: Cluster down
         if: always()

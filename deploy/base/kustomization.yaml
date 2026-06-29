@@ -1,0 +1,15 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - namespace.yaml
+  - redis-service.yaml
+  - redis-statefulset.yaml
+  - testapp-service.yaml
+  - testapp-deployment.yaml
+
+# Metadata-only label (not added to selectors, which are immutable).
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: k8s-resilience-harness
+    includeSelectors: false
