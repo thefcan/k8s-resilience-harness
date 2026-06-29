@@ -1,0 +1,41 @@
+{
+  "experiment": "testapp-pod-kill",
+  "started_at": "2026-06-29T15:58:48Z",
+  "fault": "pod-kill",
+  "killed_pods": [
+    "testapp-c57f57cf4-d9z6b"
+  ],
+  "thresholds": {
+    "min_success_rate": 0.95,
+    "max_p95_ms": 300,
+    "recovery_timeout_seconds": 30
+  },
+  "baseline": {
+    "total": 249,
+    "succeeded": 249,
+    "failed": 0,
+    "success_rate": 1,
+    "p50_ms": 4.114292,
+    "p95_ms": 14.980125,
+    "p99_ms": 32.531959,
+    "max_ms": 43.959458
+  },
+  "fault_window": {
+    "total": 750,
+    "succeeded": 750,
+    "failed": 0,
+    "success_rate": 1,
+    "p50_ms": 3.36825,
+    "p95_ms": 11.091834,
+    "p99_ms": 23.217166,
+    "max_ms": 75.397542
+  },
+  "recovery_seconds": 0,
+  "recovered": true,
+  "verdict": {
+    "pass": true,
+    "reasons": [
+      "all steady-state conditions held"
+    ]
+  }
+}

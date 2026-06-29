@@ -1,0 +1,31 @@
+# Kill one testapp pod and verify the Service stays within its steady state.
+#
+# With 3 replicas behind a load-balanced Service, losing one pod should barely
+# dent success rate and recover quickly — this experiment proves that.
+name: testapp-pod-kill
+description: Kill one testapp pod; the Service must stay within steady state and recover.
+
+# Base URL the harness drives load at (kind-published NodePort).
+target: http://localhost:30080
+
+probe:
+  path: /work
+  rps: 50
+  concurrency: 20
+  timeoutMs: 2000
+
+# The hypothesis the system must satisfy during and after the fault.
+steadyState:
+  minSuccessRate: 0.95
+  maxP95Ms: 300
+
+fault:
+  type: pod-kill
+  namespace: kresil
+  selector: app=testapp
+  count: 1
+
+phases:
+  baselineSeconds: 5
+  faultSeconds: 15
+  recoveryTimeoutSeconds: 30

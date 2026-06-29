@@ -26,7 +26,7 @@ func TestRunStartupLogsToStderr(t *testing.T) {
 	if err := run(nil, &out, &errBuf); err != nil {
 		t.Fatalf("run(): unexpected error: %v", err)
 	}
-	if !strings.Contains(errBuf.String(), "harness starting") {
+	if !strings.Contains(errBuf.String(), "harness ready") {
 		t.Fatalf("expected startup log on stderr, got %q", errBuf.String())
 	}
 	if out.Len() != 0 {

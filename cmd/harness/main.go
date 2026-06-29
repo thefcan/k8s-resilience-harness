@@ -16,7 +16,15 @@ import (
 )
 
 func main() {
-	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
+	args := os.Args[1:]
+	if len(args) > 0 && args[0] == "run" {
+		if err := runExperiment(args[1:], os.Stdout, os.Stderr); err != nil {
+			fmt.Fprintln(os.Stderr, "harness:", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if err := run(args, os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintln(os.Stderr, "harness:", err)
 		os.Exit(1)
 	}
@@ -40,7 +48,10 @@ func run(args []string, stdout, stderr io.Writer) error {
 	fs.Usage = func() {
 		_, _ = fmt.Fprint(stderr,
 			"k8s-resilience-harness — Kubernetes resilience/chaos testing harness\n\n"+
-				"Usage:\n  harness [flags]\n\nFlags:\n")
+				"Usage:\n"+
+				"  harness [flags]                      print build/info\n"+
+				"  harness run -experiment <file.yaml>  run a resilience experiment\n\n"+
+				"Flags:\n")
 		fs.PrintDefaults()
 	}
 
@@ -67,12 +78,10 @@ func run(args []string, stdout, stderr io.Writer) error {
 	}
 
 	log := logger.New(stderr, level, format)
-	log.Info("harness starting",
+	log.Info("harness ready",
 		"version", buildinfo.Version,
 		"commit", buildinfo.Commit,
 	)
-	log.Warn("no experiment runner wired yet — this is the M0 skeleton",
-		"next_milestone", "M1: SUT + loadgen + baseline",
-	)
+	log.Info("run an experiment with: harness run -experiment experiments/pod-kill.yaml")
 	return nil
 }

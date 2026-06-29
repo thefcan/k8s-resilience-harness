@@ -78,12 +78,17 @@ jobs:
           awk -v r="${rate}" 'BEGIN { exit (r >= 0.95 ? 0 : 1) }' \
             || { echo "::error::baseline success_rate ${rate} < 0.95"; exit 1; }
 
-      - name: Upload baseline report
+      - name: Run pod-kill resilience experiment
+        run: go run ./cmd/harness run -experiment experiments/pod-kill.yaml -out results/pod-kill.json
+
+      - name: Upload reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: baseline-report
-          path: results/baseline.json
+          name: experiment-reports
+          path: |
+            results/baseline.json
+            results/pod-kill.json
           if-no-files-found: warn
 
       - name: Cluster down

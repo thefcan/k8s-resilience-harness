@@ -50,11 +50,15 @@ deploy: ## Apply manifests and wait for Redis + testapp rollout.
 	bash scripts/deploy.sh
 
 .PHONY: baseline
-baseline: ## Port-forward + run loadgen, write results/baseline.json.
+baseline: ## Drive loadgen at the Service, write results/baseline.json.
 	bash scripts/baseline.sh
 
+.PHONY: experiment
+experiment: ## Run the pod-kill resilience experiment (writes results/pod-kill.json).
+	go run ./cmd/harness run -experiment experiments/pod-kill.yaml -out results/pod-kill.json
+
 .PHONY: demo
-demo: cluster-up images deploy baseline ## One command: cluster -> image -> deploy -> baseline.
+demo: cluster-up images deploy baseline experiment ## cluster -> image -> deploy -> baseline -> experiment.
 
 .PHONY: clean
 clean: ## Remove build artifacts.
