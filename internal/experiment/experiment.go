@@ -27,6 +27,10 @@ const (
 	// FaultResourcePressure schedules a bounded CPU-hog on a node hosting the
 	// target workload, forcing the workload to compete for CPU.
 	FaultResourcePressure FaultType = "resource-pressure"
+	// FaultDependencyPartition scales a stateful dependency to zero for the fault
+	// window, partitioning the workload from it. It is expected to violate steady
+	// state — it exercises the harness's failure path.
+	FaultDependencyPartition FaultType = "dependency-partition"
 )
 
 // Experiment is a single declarative resilience experiment.
@@ -56,10 +60,11 @@ type SteadyState struct {
 
 // Fault describes the disruption to inject.
 type Fault struct {
-	Type      FaultType `json:"type"`
-	Namespace string    `json:"namespace"`
-	Selector  string    `json:"selector"` // label selector, e.g. app=testapp
-	Count     int       `json:"count"`    // how many pods to kill (pod-kill only)
+	Type       FaultType `json:"type"`
+	Namespace  string    `json:"namespace"`
+	Selector   string    `json:"selector"`   // label selector, e.g. app=testapp (pod-targeting faults)
+	Count      int       `json:"count"`      // how many pods to kill (pod-kill only)
+	Dependency string    `json:"dependency"` // StatefulSet to take down (dependency-partition only)
 }
 
 // Phases is the timeline of the run, in seconds.
@@ -129,14 +134,18 @@ func (e *Experiment) Validate() error {
 	}
 	switch e.Fault.Type {
 	case FaultPodKill, FaultNodeDrain, FaultResourcePressure:
+		if strings.TrimSpace(e.Fault.Selector) == "" {
+			errs = append(errs, fmt.Sprintf("fault.selector is required for %q", e.Fault.Type))
+		}
+	case FaultDependencyPartition:
+		if strings.TrimSpace(e.Fault.Dependency) == "" {
+			errs = append(errs, fmt.Sprintf("fault.dependency (the StatefulSet to take down) is required for %q", e.Fault.Type))
+		}
 	default:
-		errs = append(errs, fmt.Sprintf("unsupported fault type %q (supported: %q, %q, %q)", e.Fault.Type, FaultPodKill, FaultNodeDrain, FaultResourcePressure))
+		errs = append(errs, fmt.Sprintf("unsupported fault type %q (supported: %q, %q, %q, %q)", e.Fault.Type, FaultPodKill, FaultNodeDrain, FaultResourcePressure, FaultDependencyPartition))
 	}
 	if strings.TrimSpace(e.Fault.Namespace) == "" {
 		errs = append(errs, "fault.namespace is required")
-	}
-	if strings.TrimSpace(e.Fault.Selector) == "" {
-		errs = append(errs, "fault.selector is required")
 	}
 	if e.Fault.Count < 1 {
 		errs = append(errs, "fault.count must be >= 1")

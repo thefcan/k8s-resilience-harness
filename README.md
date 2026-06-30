@@ -22,24 +22,25 @@ so resilience becomes a CI gate rather than a hope.
 
 ## Status
 
-**Milestone M3 (in progress) — pluggable fault injectors; `pod-kill` + `node-drain` + `resource-pressure` shipped.**
+**Milestone M3 (done) — four pluggable fault injectors across both the PASS and FAIL paths: `pod-kill`, `node-drain`, `resource-pressure`, `dependency-partition`.**
 
 The harness drives constant load at a multi-replica `testapp` (backed by a Redis
 StatefulSet) running in a local [`kind`](https://kind.sigs.k8s.io/) cluster,
-injects a fault via `client-go` (kill a random pod, cordon a node hosting the
-workload and evict its pods, or pin a bounded CPU-hog onto the workload's node),
-and judges the run against a declarative **steady-state hypothesis** — emitting a
-deterministic pass/fail verdict, a recovery time, and a JSON + human report. A
-violated hypothesis fails the process (and the CI build).
+injects a fault via `client-go` (kill a random pod, cordon a node and evict its
+pods, pin a bounded CPU-hog onto the workload's node, or partition the workload
+from its datastore), and judges the run against a declarative **steady-state
+hypothesis** — emitting a deterministic pass/fail verdict, a recovery time, and a
+JSON + human report. A violated hypothesis fails the process (and the CI build) —
+exercised for real by the `dependency-partition` experiment.
 
 ```text
 M0  skeleton + kind cluster bring-up        ✅ done
 M1  SUT + loadgen + baseline steady-state   ✅ done
 M2  pod-kill injector + verdict + report    ✅ done
-M3  more fault types                        🚧 in progress
+M3  more fault types                        ✅ done
     ├─ node-drain (cordon + evict)          ✅ done
     ├─ resource-pressure (bounded CPU-hog)  ✅ done
-    └─ network faults (latency / partition) ⬜ planned
+    └─ dependency-partition (the FAIL path) ✅ done
 M4  Prometheus metrics platform             ⬜ planned
 M5  scikit-learn anomaly analysis           ⬜ planned
 M6  polish: README, diagram, docs           ⬜ planned
@@ -80,10 +81,11 @@ make cluster-down
 Run `make help` to list all targets. To run an experiment directly:
 
 ```bash
-go run ./cmd/harness run -experiment experiments/pod-kill.yaml          -out results/pod-kill.json
-go run ./cmd/harness run -experiment experiments/node-drain.yaml        -out results/node-drain.json
-go run ./cmd/harness run -experiment experiments/resource-pressure.yaml -out results/resource-pressure.json
-# exits non-zero if the steady-state hypothesis is violated
+go run ./cmd/harness run -experiment experiments/pod-kill.yaml             -out results/pod-kill.json
+go run ./cmd/harness run -experiment experiments/node-drain.yaml           -out results/node-drain.json
+go run ./cmd/harness run -experiment experiments/resource-pressure.yaml    -out results/resource-pressure.json
+go run ./cmd/harness run -experiment experiments/dependency-partition.yaml -out results/dependency-partition.json
+# exits non-zero if the steady-state hypothesis is violated (dependency-partition does, by design)
 ```
 
 ---
@@ -100,14 +102,15 @@ internal/
   metrics/            # success rate + latency percentiles (shared)
   experiment/         # declarative experiment model: parse + validate
   k8s/                # client-go clientset (in-cluster or kubeconfig)
-  inject/             # fault injectors — Injector iface: pod-kill, node-drain, resource-pressure
+  inject/             # fault injectors — Injector iface: pod-kill, node-drain, resource-pressure, dependency-partition
   probe/              # in-fault prober + windowed metrics + recovery time
   report/             # verdict + JSON / human report
 deploy/base/          # kustomize: namespace, Redis StatefulSet, testapp Deployment
 experiments/
-  pod-kill.yaml          # declarative pod-kill experiment
-  node-drain.yaml        # declarative node-drain experiment (cordon + evict)
-  resource-pressure.yaml # declarative resource-pressure experiment (bounded CPU-hog)
+  pod-kill.yaml             # declarative pod-kill experiment
+  node-drain.yaml           # declarative node-drain experiment (cordon + evict)
+  resource-pressure.yaml    # declarative resource-pressure experiment (bounded CPU-hog)
+  dependency-partition.yaml # declarative partition experiment (expected FAIL)
 scripts/              # cluster-up/down, build-images, deploy, baseline
 results/              # run outputs (baseline.json, pod-kill.json, node-drain.json, ...)
 .github/workflows/    # CI: lint+test, integration (deploy + baseline + experiment)
@@ -120,8 +123,8 @@ results/              # run outputs (baseline.json, pod-kill.json, node-drain.js
         │
         ├─► probe ──(constant RPS, /work)─► NodePort :30080 ─► testapp ×3 ─► Redis
         │                                   (kube-proxy LB)
-        ├─► inject (client-go):  pod-kill · node-drain · resource-pressure
-        │                        (acts on the testapp pods / their node)
+        ├─► inject (client-go):  pod-kill · node-drain · resource-pressure · dependency-partition
+        │                        (disrupts the testapp pods, their node, or the Redis dependency)
         │
         └─► windowed metrics (baseline | fault) + recovery time
                   │
@@ -149,9 +152,12 @@ spread across two workers behind the Service, backed by a Redis StatefulSet:
   cluster (`topologySpread: ScheduleAnyway` lets evicted pods reschedule onto the
   surviving worker). `resource-pressure` pins a **bounded CPU-hog** (capped at half a
   CPU) onto a node hosting the workload so its replicas there compete for CPU, and
-  **deletes the hog on rollback**. All three are selector-scoped — they disrupt only
-  the experiment's own workload, never system or storage pods — and unit-tested
-  against a `client-go` fake clientset.
+  **deletes the hog on rollback**. `dependency-partition` is the odd one out — it is
+  *expected* to fail: it scales the Redis StatefulSet to zero for the fault window so
+  `testapp` is cut off from its datastore, then restores the original replica count on
+  rollback, exercising the harness's FAIL path. The first three are selector-scoped
+  (they disrupt only the experiment's own workload, never system pods); all four are
+  unit-tested against a `client-go` fake clientset.
 - **`loadgen`** — paced ticker + bounded worker pool; in-flight requests are not
   cancelled when the duration elapses. Pool saturation is counted separately, so
   `achieved_rps` reflects requests actually sent, not ticks emitted.
@@ -243,19 +249,48 @@ The hog is capped at half a CPU, so it stresses the node without destabilising t
 host running kind — visible above as tail latency climbing (p99 and max rise under
 the contention) while success rate holds. The harness deletes the hog on rollback.
 
+### dependency-partition (the FAIL path)
+
+The first three faults are ones the system is built to ride out — so they all
+**PASS**. A resilience harness that only ever prints PASS proves nothing, so
+[`experiments/dependency-partition.yaml`](experiments/dependency-partition.yaml)
+deliberately breaks something the system *can't* survive: it scales the Redis
+StatefulSet to zero for the fault window, cutting `testapp` off from its datastore.
+
+```yaml
+fault:
+  type: dependency-partition
+  namespace: kresil
+  dependency: redis          # the StatefulSet taken down for the fault window
+```
+
+A real run against the kind deployment (full data in
+[`results/dependency-partition.sample.json`](results/dependency-partition.sample.json)):
+
+![dependency-partition experiment report: FAIL verdict, success rate collapses to 0.6% with Redis gone](docs/img/dependency-partition.png)
+
+With Redis gone, `/work` can't complete: the success rate collapses to **0.6%**, the
+system never returns to steady state, and the harness emits a **FAIL** verdict and
+**exits non-zero** — which is exactly the point. CI runs this experiment as a
+*negative test* (it asserts the harness fails), so the steady-state gate is proven to
+actually fire. On rollback the harness scales Redis back to its original replica
+count, leaving the cluster as it was found.
+
 ## CI
 
 GitHub Actions runs two jobs on every push/PR:
 
 - **lint + unit tests** — `golangci-lint`, `go test -race ./...`, `go build`.
-  Unit tests cover the verdict logic, percentile math, the pod-kill, node-drain
-  and resource-pressure injectors (via a `client-go` **fake clientset**), and the
-  load/probe engines.
+  Unit tests cover the verdict logic, percentile math, all four injectors —
+  pod-kill, node-drain, resource-pressure and dependency-partition (via a
+  `client-go` **fake clientset**) — and the load/probe engines.
 - **integration (kind deploy + experiments)** — installs `kind`, builds and
   loads the image, deploys via the project's own scripts, measures the baseline
-  (**fails if success rate < 95%**), then runs the pod-kill, node-drain **and**
+  (**fails if success rate < 95%**), then runs the pod-kill, node-drain and
   resource-pressure experiments (**each fails the build if its steady-state
-  hypothesis is violated**). All reports are uploaded as artifacts.
+  hypothesis is violated**), and finally the dependency-partition experiment as a
+  **negative test** — the build fails unless the harness *correctly* reports a FAIL
+  and exits non-zero. All reports are uploaded as artifacts.
 
 ## License
 

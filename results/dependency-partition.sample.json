@@ -1,0 +1,42 @@
+{
+  "experiment": "testapp-dependency-partition",
+  "started_at": "2026-06-30T21:50:49Z",
+  "fault": "dependency-partition",
+  "affected": [
+    "redis"
+  ],
+  "thresholds": {
+    "min_success_rate": 0.95,
+    "max_p95_ms": 300,
+    "recovery_timeout_seconds": 40
+  },
+  "baseline": {
+    "total": 250,
+    "succeeded": 250,
+    "failed": 0,
+    "success_rate": 1,
+    "p50_ms": 3.269959,
+    "p95_ms": 8.16725,
+    "p99_ms": 14.318751,
+    "max_ms": 21.895292
+  },
+  "fault_window": {
+    "total": 1000,
+    "succeeded": 6,
+    "failed": 994,
+    "success_rate": 0.006,
+    "p50_ms": 2.633583,
+    "p95_ms": 5.868959,
+    "p99_ms": 5.868959,
+    "max_ms": 5.868959
+  },
+  "recovery_seconds": 20,
+  "recovered": false,
+  "verdict": {
+    "pass": false,
+    "reasons": [
+      "success rate 0.0060 \u003c required 0.9500",
+      "system did not return to steady state within the observed window"
+    ]
+  }
+}

@@ -1,0 +1,34 @@
+# Partition testapp from its Redis datastore by scaling the Redis StatefulSet to
+# zero for the fault window, then restoring it on rollback.
+#
+# This experiment is EXPECTED TO FAIL — and that is the point. The other three
+# faults (pod-kill, node-drain, resource-pressure) are ones the system rides out;
+# this one removes a hard dependency, so /work starts erroring and the success
+# rate collapses. A correct harness must report a FAIL verdict and exit non-zero,
+# proving the steady-state gate actually fires rather than rubber-stamping PASS.
+name: testapp-dependency-partition
+description: Partition testapp from Redis; the harness must catch the violation (a FAIL verdict + non-zero exit).
+
+# Base URL the harness drives load at (kind-published NodePort).
+target: http://localhost:30080
+
+probe:
+  path: /work
+  rps: 50
+  concurrency: 20
+  timeoutMs: 2000
+
+# The same bar as the transient faults: with Redis gone, /work cannot meet it.
+steadyState:
+  minSuccessRate: 0.95
+  maxP95Ms: 300
+
+fault:
+  type: dependency-partition
+  namespace: kresil
+  dependency: redis
+
+phases:
+  baselineSeconds: 5
+  faultSeconds: 20
+  recoveryTimeoutSeconds: 40

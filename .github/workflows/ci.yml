@@ -87,6 +87,16 @@ jobs:
       - name: Run resource-pressure resilience experiment
         run: go run ./cmd/harness run -experiment experiments/resource-pressure.yaml -out results/resource-pressure.json
 
+      # Negative test, run last: cutting Redis is expected to violate steady state,
+      # so the harness MUST exit non-zero. If it exits 0 the gate is broken.
+      - name: Verify the harness FAILS a real partition (negative test)
+        run: |
+          if go run ./cmd/harness run -experiment experiments/dependency-partition.yaml -out results/dependency-partition.json; then
+            echo "::error::dependency-partition unexpectedly PASSED — the steady-state gate did not fire"
+            exit 1
+          fi
+          echo "dependency-partition correctly FAILED (harness exited non-zero, as designed)"
+
       - name: Upload reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -97,6 +107,7 @@ jobs:
             results/pod-kill.json
             results/node-drain.json
             results/resource-pressure.json
+            results/dependency-partition.json
           if-no-files-found: warn
 
       - name: Cluster down
