@@ -122,6 +122,11 @@ results/              # run outputs (baseline.json, pod-kill.json, node-drain.js
                           └─► verdict (PASS/FAIL) + results/<run>.json
 ```
 
+The same system on a live 3-node `kind` cluster — three `testapp` replicas
+spread across two workers behind the Service, backed by a Redis StatefulSet:
+
+![kind cluster topology: three nodes, with redis and three testapp replicas spread across two workers](docs/img/cluster-topology.png)
+
 - **`testapp`** — `/livez` (liveness, independent of Redis), `/healthz`
   (readiness, reflects Redis reachability + drains on SIGTERM), `/work` (atomic
   Redis INCR). Generic error bodies; details are logged server-side.
@@ -165,17 +170,9 @@ phases:
 
 The harness measures a baseline, kills a pod, then measures the fault window and
 recovery time, and checks the hypothesis. A real PASS run against the kind
-deployment — see [`results/pod-kill.sample.json`](results/pod-kill.sample.json):
+deployment (full data in [`results/pod-kill.sample.json`](results/pod-kill.sample.json)):
 
-```text
-Experiment: testapp-pod-kill
-Fault:      pod-kill  affected=[testapp-c57f57cf4-t47c7]
-Baseline:   requests=250 ok=250 fail=0 success_rate=1.0000 p50=3.1ms p95=9.0ms ...
-Fault win:  requests=748 ok=748 fail=0 success_rate=1.0000 p50=2.9ms p95=6.8ms ...
-Recovery:   0.0s (recovered=true)
-Verdict:    PASS
-  - all steady-state conditions held
-```
+![pod-kill experiment report: PASS verdict, 100% success rate held through the fault window, 0.0s recovery](docs/img/pod-kill.png)
 
 With three replicas behind a load-balanced Service and a graceful drain, killing
 one pod stays within steady state and recovers immediately. If the hypothesis is
@@ -200,18 +197,10 @@ phases:
   recoveryTimeoutSeconds: 45
 ```
 
-A real PASS run against the kind deployment — see
-[`results/node-drain.sample.json`](results/node-drain.sample.json):
+A real PASS run against the kind deployment (full data in
+[`results/node-drain.sample.json`](results/node-drain.sample.json)):
 
-```text
-Experiment: testapp-node-drain
-Fault:      node-drain  affected=[testapp-c57f57cf4-5rjrn]
-Baseline:   requests=249  ok=249  fail=0 success_rate=1.0000 p50=3.8ms p95=16.0ms ...
-Fault win:  requests=1248 ok=1248 fail=0 success_rate=1.0000 p50=3.8ms p95=17.1ms ...
-Recovery:   0.0s (recovered=true)
-Verdict:    PASS
-  - all steady-state conditions held
-```
+![node-drain experiment report: PASS verdict, 100% success rate held while the evicted pod reschedules onto the surviving worker](docs/img/node-drain.png)
 
 The load-balanced Service routes around the evicted pod while it reschedules, so
 steady state holds throughout. After the run the harness uncordons the node, so
