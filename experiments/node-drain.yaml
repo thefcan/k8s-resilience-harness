@@ -1,0 +1,33 @@
+# Cordon and drain a node hosting testapp; the Service must stay within steady
+# state while the evicted replicas reschedule onto the remaining worker.
+#
+# This is a harder fault than pod-kill: instead of one pod, every testapp replica
+# on the chosen node is evicted at once, and the node is cordoned so nothing
+# reschedules back onto it. The harness uncordons the node afterwards (rollback)
+# so the experiment is repeatable.
+name: testapp-node-drain
+description: Cordon a node and evict its testapp replicas; the Service must stay within steady state and recover.
+
+# Base URL the harness drives load at (kind-published NodePort).
+target: http://localhost:30080
+
+probe:
+  path: /work
+  rps: 50
+  concurrency: 20
+  timeoutMs: 2000
+
+# The hypothesis the system must satisfy during and after the fault.
+steadyState:
+  minSuccessRate: 0.95
+  maxP95Ms: 300
+
+fault:
+  type: node-drain
+  namespace: kresil
+  selector: app=testapp
+
+phases:
+  baselineSeconds: 5
+  faultSeconds: 25
+  recoveryTimeoutSeconds: 45

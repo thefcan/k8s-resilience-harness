@@ -61,7 +61,7 @@ func TestHumanContainsVerdict(t *testing.T) {
 	r := Report{
 		Experiment:  "x",
 		Fault:       "pod-kill",
-		KilledPods:  []string{"p1"},
+		Affected:    []string{"p1"},
 		FaultWindow: fw,
 		Verdict:     BuildVerdict(thresholds, fw, true, 0),
 	}

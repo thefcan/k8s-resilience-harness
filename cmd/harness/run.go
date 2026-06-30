@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"time"
 
+	"k8s.io/client-go/kubernetes"
+
 	"github.com/thefcan/k8s-resilience-harness/internal/experiment"
 	"github.com/thefcan/k8s-resilience-harness/internal/inject"
 	"github.com/thefcan/k8s-resilience-harness/internal/k8s"
@@ -67,8 +69,11 @@ func runExperiment(args []string, stdout, stderr io.Writer) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
-	killer := inject.NewPodKiller(clientset, exp.Fault.Namespace, exp.Fault.Selector)
-	rep, err := execute(ctx, log, exp, killer)
+	injector, err := newInjector(clientset, exp.Fault)
+	if err != nil {
+		return err
+	}
+	rep, err := execute(ctx, log, exp, injector)
 	if err != nil {
 		return err
 	}
@@ -86,14 +91,21 @@ func runExperiment(args []string, stdout, stderr io.Writer) error {
 	return nil
 }
 
-// killer is the minimal capability execute needs, so it can be faked in tests.
-type podKiller interface {
-	Kill(ctx context.Context, count int) ([]string, error)
+// newInjector builds the fault injector named by the experiment.
+func newInjector(client kubernetes.Interface, f experiment.Fault) (inject.Injector, error) {
+	switch f.Type {
+	case experiment.FaultPodKill:
+		return inject.NewPodKiller(client, f.Namespace, f.Selector, f.Count), nil
+	case experiment.FaultNodeDrain:
+		return inject.NewNodeDrainer(client, f.Namespace, f.Selector), nil
+	default:
+		return nil, fmt.Errorf("unsupported fault type %q", f.Type)
+	}
 }
 
 // execute drives the probe through baseline -> fault -> observation, computes
 // per-window metrics + recovery, and builds the report.
-func execute(ctx context.Context, log *slog.Logger, exp *experiment.Experiment, killer podKiller) (report.Report, error) {
+func execute(ctx context.Context, log *slog.Logger, exp *experiment.Experiment, injector inject.Injector) (report.Report, error) {
 	prober := probe.New(exp.TargetURL(), exp.Probe.RPS, exp.Probe.Concurrency, exp.Probe.Timeout())
 
 	probeCtx, cancelProbe := context.WithCancel(ctx)
@@ -108,12 +120,23 @@ func execute(ctx context.Context, log *slog.Logger, exp *experiment.Experiment, 
 	}
 
 	injectedAt := time.Now()
-	log.Info("injecting fault", "type", exp.Fault.Type, "selector", exp.Fault.Selector, "count", exp.Fault.Count)
-	killed, err := killer.Kill(ctx, exp.Fault.Count)
+	log.Info("injecting fault", "type", exp.Fault.Type, "namespace", exp.Fault.Namespace, "selector", exp.Fault.Selector)
+	affected, err := injector.Inject(ctx)
+	// Always undo standing cluster state (e.g. a cordoned node), even on
+	// cancellation. Pod-kill's rollback is a no-op.
+	defer func() {
+		rbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if rbErr := injector.Rollback(rbCtx); rbErr != nil {
+			log.Warn("fault rollback failed", "err", rbErr)
+		} else {
+			log.Debug("fault rolled back")
+		}
+	}()
 	if err != nil {
 		return report.Report{}, fmt.Errorf("inject fault: %w", err)
 	}
-	log.Info("killed pods", "pods", killed)
+	log.Info("fault injected", "affected", affected)
 
 	log.Info("observing fault + recovery", "seconds", exp.Phases.FaultSeconds)
 	if err := sleepCtx(ctx, exp.Phases.Fault()); err != nil {
@@ -139,7 +162,7 @@ func execute(ctx context.Context, log *slog.Logger, exp *experiment.Experiment, 
 		Experiment:      exp.Name,
 		StartedAt:       startedAt.UTC().Format(time.RFC3339),
 		Fault:           string(exp.Fault.Type),
-		KilledPods:      killed,
+		Affected:        affected,
 		Thresholds:      th,
 		Baseline:        baseline,
 		FaultWindow:     faultWindow,

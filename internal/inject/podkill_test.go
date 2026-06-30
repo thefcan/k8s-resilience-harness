@@ -31,11 +31,11 @@ func TestKillDeletesRequestedCount(t *testing.T) {
 		pod("other", "kresil", map[string]string{"app": "redis"}), // must not be touched
 	}
 	cs := fake.NewSimpleClientset(objs...)
-	killer := NewPodKiller(cs, "kresil", "app=testapp")
+	killer := NewPodKiller(cs, "kresil", "app=testapp", 2)
 
-	killed, err := killer.Kill(context.Background(), 2)
+	killed, err := killer.Inject(context.Background())
 	if err != nil {
-		t.Fatalf("Kill: %v", err)
+		t.Fatalf("Inject: %v", err)
 	}
 	if len(killed) != 2 {
 		t.Fatalf("killed %d pods, want 2", len(killed))
@@ -58,9 +58,9 @@ func TestKillClampsToAvailable(t *testing.T) {
 		pod("testapp-1", "kresil", map[string]string{"app": "testapp"}),
 		pod("testapp-2", "kresil", map[string]string{"app": "testapp"}),
 	)
-	killed, err := NewPodKiller(cs, "kresil", "app=testapp").Kill(context.Background(), 10)
+	killed, err := NewPodKiller(cs, "kresil", "app=testapp", 10).Inject(context.Background())
 	if err != nil {
-		t.Fatalf("Kill: %v", err)
+		t.Fatalf("Inject: %v", err)
 	}
 	if len(killed) != 2 {
 		t.Fatalf("killed %d, want 2 (clamped to available)", len(killed))
@@ -69,7 +69,14 @@ func TestKillClampsToAvailable(t *testing.T) {
 
 func TestKillErrorsWhenNoMatch(t *testing.T) {
 	cs := fake.NewSimpleClientset(pod("testapp-1", "kresil", map[string]string{"app": "testapp"}))
-	if _, err := NewPodKiller(cs, "kresil", "app=ghost").Kill(context.Background(), 1); err == nil {
+	if _, err := NewPodKiller(cs, "kresil", "app=ghost", 1).Inject(context.Background()); err == nil {
 		t.Fatal("expected error when no pods match the selector")
+	}
+}
+
+func TestPodKillRollbackIsNoOp(t *testing.T) {
+	cs := fake.NewSimpleClientset(pod("testapp-1", "kresil", map[string]string{"app": "testapp"}))
+	if err := NewPodKiller(cs, "kresil", "app=testapp", 1).Rollback(context.Background()); err != nil {
+		t.Fatalf("pod-kill Rollback should be a no-op, got %v", err)
 	}
 }

@@ -21,6 +21,9 @@ type FaultType string
 const (
 	// FaultPodKill deletes one or more pods matching a selector.
 	FaultPodKill FaultType = "pod-kill"
+	// FaultNodeDrain cordons a node hosting the target workload and evicts the
+	// workload's pods from it, forcing them to reschedule elsewhere.
+	FaultNodeDrain FaultType = "node-drain"
 )
 
 // Experiment is a single declarative resilience experiment.
@@ -53,7 +56,7 @@ type Fault struct {
 	Type      FaultType `json:"type"`
 	Namespace string    `json:"namespace"`
 	Selector  string    `json:"selector"` // label selector, e.g. app=testapp
-	Count     int       `json:"count"`    // how many pods to kill
+	Count     int       `json:"count"`    // how many pods to kill (pod-kill only)
 }
 
 // Phases is the timeline of the run, in seconds.
@@ -121,8 +124,10 @@ func (e *Experiment) Validate() error {
 	if strings.TrimSpace(e.Target) == "" {
 		errs = append(errs, "target is required")
 	}
-	if e.Fault.Type != FaultPodKill {
-		errs = append(errs, fmt.Sprintf("unsupported fault type %q (only %q)", e.Fault.Type, FaultPodKill))
+	switch e.Fault.Type {
+	case FaultPodKill, FaultNodeDrain:
+	default:
+		errs = append(errs, fmt.Sprintf("unsupported fault type %q (supported: %q, %q)", e.Fault.Type, FaultPodKill, FaultNodeDrain))
 	}
 	if strings.TrimSpace(e.Fault.Namespace) == "" {
 		errs = append(errs, "fault.namespace is required")

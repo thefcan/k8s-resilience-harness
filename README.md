@@ -22,20 +22,23 @@ so resilience becomes a CI gate rather than a hope.
 
 ## Status
 
-**Milestone M2 — pod-kill injector + steady-state verdict + report — ✅ done.**
+**Milestone M3 (in progress) — pluggable fault injectors; `pod-kill` + `node-drain` shipped.**
 
 The harness drives constant load at a multi-replica `testapp` (backed by a Redis
 StatefulSet) running in a local [`kind`](https://kind.sigs.k8s.io/) cluster,
-injects a fault via `client-go` (kill a random pod), and judges the run against
-a declarative **steady-state hypothesis** — emitting a deterministic pass/fail
-verdict, a recovery time, and a JSON + human report. A violated hypothesis fails
-the process (and the CI build).
+injects a fault via `client-go` (kill a random pod, or cordon a node hosting the
+workload and evict its pods), and judges the run against a declarative
+**steady-state hypothesis** — emitting a deterministic pass/fail verdict, a
+recovery time, and a JSON + human report. A violated hypothesis fails the process
+(and the CI build).
 
 ```text
 M0  skeleton + kind cluster bring-up        ✅ done
 M1  SUT + loadgen + baseline steady-state   ✅ done
 M2  pod-kill injector + verdict + report    ✅ done
-M3  node-drain + resource + network faults  ⬜ planned
+M3  more fault types                        🚧 in progress
+    ├─ node-drain (cordon + evict)          ✅ done
+    └─ resource-pressure + network faults   ⬜ planned
 M4  Prometheus metrics platform             ⬜ planned
 M5  scikit-learn anomaly analysis           ⬜ planned
 M6  polish: README, diagram, docs           ⬜ planned
@@ -76,7 +79,8 @@ make cluster-down
 Run `make help` to list all targets. To run an experiment directly:
 
 ```bash
-go run ./cmd/harness run -experiment experiments/pod-kill.yaml -out results/pod-kill.json
+go run ./cmd/harness run -experiment experiments/pod-kill.yaml   -out results/pod-kill.json
+go run ./cmd/harness run -experiment experiments/node-drain.yaml -out results/node-drain.json
 # exits non-zero if the steady-state hypothesis is violated
 ```
 
@@ -94,14 +98,15 @@ internal/
   metrics/            # success rate + latency percentiles (shared)
   experiment/         # declarative experiment model: parse + validate
   k8s/                # client-go clientset (in-cluster or kubeconfig)
-  inject/             # fault injectors — pod-kill (client-go)
+  inject/             # fault injectors — Injector iface: pod-kill, node-drain (client-go)
   probe/              # in-fault prober + windowed metrics + recovery time
   report/             # verdict + JSON / human report
 deploy/base/          # kustomize: namespace, Redis StatefulSet, testapp Deployment
 experiments/
   pod-kill.yaml       # declarative pod-kill experiment
+  node-drain.yaml     # declarative node-drain experiment (cordon + evict)
 scripts/              # cluster-up/down, build-images, deploy, baseline
-results/              # run outputs (baseline.json, pod-kill.json, ...)
+results/              # run outputs (baseline.json, pod-kill.json, node-drain.json, ...)
 .github/workflows/    # CI: lint+test, integration (deploy + baseline + experiment)
 ```
 
@@ -110,7 +115,7 @@ results/              # run outputs (baseline.json, pod-kill.json, ...)
 ```text
    harness run ─┬─► probe ──(constant RPS, /work)─► NodePort :30080 ─► testapp ×3 ─► Redis
                 │                                   (kube-proxy LB)        ▲
-                ├─► inject (client-go) ── kill a random pod ───────────────┘
+                ├─► inject (client-go) ── pod-kill | node-drain ───────────┘
                 │
                 └─► windowed metrics (baseline | fault) + recovery time
                           │
@@ -125,6 +130,13 @@ results/              # run outputs (baseline.json, pod-kill.json, ...)
   around a killed pod. A graceful drain (fail readiness, wait, then shut down)
   keeps pod deletion from producing spurious connection errors — both needed
   for honest M2 fault measurements.
+- **Pluggable injectors** — `inject.Injector` is a small interface
+  (`Inject → affected pods`, `Rollback`). `pod-kill` deletes random selector-matched
+  pods (rollback is a no-op; the Deployment recreates them). `node-drain` cordons
+  one node hosting the workload and evicts *only the experiment's* pods from it via
+  the Eviction API, then **uncordons on rollback** so repeated runs don't strand the
+  cluster. `topologySpread: ScheduleAnyway` lets evicted pods reschedule onto the
+  surviving worker. Both are unit-tested against a `client-go` fake clientset.
 - **`loadgen`** — paced ticker + bounded worker pool; in-flight requests are not
   cancelled when the duration elapses. Pool saturation is counted separately, so
   `achieved_rps` reflects requests actually sent, not ticks emitted.
@@ -157,9 +169,9 @@ deployment — see [`results/pod-kill.sample.json`](results/pod-kill.sample.json
 
 ```text
 Experiment: testapp-pod-kill
-Fault:      pod-kill  killed=[testapp-c57f57cf4-d9z6b]
-Baseline:   requests=249 ok=249 fail=0 success_rate=1.0000 p50=4.1ms p95=15.0ms ...
-Fault win:  requests=750 ok=750 fail=0 success_rate=1.0000 p50=3.4ms p95=11.1ms ...
+Fault:      pod-kill  affected=[testapp-c57f57cf4-t47c7]
+Baseline:   requests=250 ok=250 fail=0 success_rate=1.0000 p50=3.1ms p95=9.0ms ...
+Fault win:  requests=748 ok=748 fail=0 success_rate=1.0000 p50=2.9ms p95=6.8ms ...
 Recovery:   0.0s (recovered=true)
 Verdict:    PASS
   - all steady-state conditions held
@@ -169,18 +181,55 @@ With three replicas behind a load-balanced Service and a graceful drain, killing
 one pod stays within steady state and recovers immediately. If the hypothesis is
 violated, the harness prints the failing condition and exits non-zero.
 
+### node-drain
+
+[`experiments/node-drain.yaml`](experiments/node-drain.yaml) swaps in the second
+injector: instead of deleting a pod, it cordons one worker node hosting `testapp`
+and evicts that workload's pods from it, forcing them to reschedule onto the
+surviving worker. The phase timing allows a longer recovery window because a
+reschedule is slower than a Deployment replacing a single deleted pod:
+
+```yaml
+fault:
+  type: node-drain
+  namespace: kresil
+  selector: app=testapp
+phases:
+  baselineSeconds: 5
+  faultSeconds: 25
+  recoveryTimeoutSeconds: 45
+```
+
+A real PASS run against the kind deployment — see
+[`results/node-drain.sample.json`](results/node-drain.sample.json):
+
+```text
+Experiment: testapp-node-drain
+Fault:      node-drain  affected=[testapp-c57f57cf4-5rjrn]
+Baseline:   requests=249  ok=249  fail=0 success_rate=1.0000 p50=3.8ms p95=16.0ms ...
+Fault win:  requests=1248 ok=1248 fail=0 success_rate=1.0000 p50=3.8ms p95=17.1ms ...
+Recovery:   0.0s (recovered=true)
+Verdict:    PASS
+  - all steady-state conditions held
+```
+
+The load-balanced Service routes around the evicted pod while it reschedules, so
+steady state holds throughout. After the run the harness uncordons the node, so
+the cluster is left exactly as it was found.
+
 ## CI
 
 GitHub Actions runs two jobs on every push/PR:
 
 - **lint + unit tests** — `golangci-lint`, `go test -race ./...`, `go build`.
-  Unit tests cover the verdict logic, percentile math, the pod-kill injector
-  (via a `client-go` **fake clientset**), and the load/probe engines.
-- **integration (kind deploy + baseline + experiment)** — installs `kind`,
-  builds and loads the image, deploys via the project's own scripts, measures
-  the baseline (**fails if success rate < 95%**), then runs the pod-kill
-  experiment (**fails if the steady-state hypothesis is violated**). Both
-  reports are uploaded as artifacts.
+  Unit tests cover the verdict logic, percentile math, the pod-kill and
+  node-drain injectors (via a `client-go` **fake clientset**), and the
+  load/probe engines.
+- **integration (kind deploy + experiments)** — installs `kind`, builds and
+  loads the image, deploys via the project's own scripts, measures the baseline
+  (**fails if success rate < 95%**), then runs the pod-kill **and** node-drain
+  experiments (**each fails the build if its steady-state hypothesis is
+  violated**). All reports are uploaded as artifacts.
 
 ## License
 

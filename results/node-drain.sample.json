@@ -1,0 +1,41 @@
+{
+  "experiment": "testapp-node-drain",
+  "started_at": "2026-06-30T15:04:00Z",
+  "fault": "node-drain",
+  "affected": [
+    "testapp-c57f57cf4-5rjrn"
+  ],
+  "thresholds": {
+    "min_success_rate": 0.95,
+    "max_p95_ms": 300,
+    "recovery_timeout_seconds": 45
+  },
+  "baseline": {
+    "total": 249,
+    "succeeded": 249,
+    "failed": 0,
+    "success_rate": 1,
+    "p50_ms": 3.751542,
+    "p95_ms": 15.979042,
+    "p99_ms": 23.188918,
+    "max_ms": 30.479542
+  },
+  "fault_window": {
+    "total": 1248,
+    "succeeded": 1248,
+    "failed": 0,
+    "success_rate": 1,
+    "p50_ms": 3.801376,
+    "p95_ms": 17.103042,
+    "p99_ms": 52.643959,
+    "max_ms": 157.513001
+  },
+  "recovery_seconds": 0,
+  "recovered": true,
+  "verdict": {
+    "pass": true,
+    "reasons": [
+      "all steady-state conditions held"
+    ]
+  }
+}

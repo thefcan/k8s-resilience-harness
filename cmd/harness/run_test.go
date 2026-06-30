@@ -12,15 +12,21 @@ import (
 	"github.com/thefcan/k8s-resilience-harness/internal/experiment"
 )
 
-type fakeKiller struct {
-	called atomic.Int32
-	names  []string
-	err    error
+type fakeInjector struct {
+	injected atomic.Int32
+	rolled   atomic.Int32
+	names    []string
+	err      error
 }
 
-func (f *fakeKiller) Kill(_ context.Context, _ int) ([]string, error) {
-	f.called.Add(1)
+func (f *fakeInjector) Inject(context.Context) ([]string, error) {
+	f.injected.Add(1)
 	return f.names, f.err
+}
+
+func (f *fakeInjector) Rollback(context.Context) error {
+	f.rolled.Add(1)
+	return nil
 }
 
 func testExperiment(target string) *experiment.Experiment {
@@ -42,19 +48,22 @@ func TestExecutePassesAgainstHealthyServer(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	killer := &fakeKiller{names: []string{"p1"}}
-	rep, err := execute(context.Background(), discardLog(), testExperiment(ts.URL), killer)
+	injector := &fakeInjector{names: []string{"p1"}}
+	rep, err := execute(context.Background(), discardLog(), testExperiment(ts.URL), injector)
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	if killer.called.Load() != 1 {
-		t.Fatalf("killer called %d times, want 1", killer.called.Load())
+	if injector.injected.Load() != 1 {
+		t.Fatalf("injector called %d times, want 1", injector.injected.Load())
+	}
+	if injector.rolled.Load() != 1 {
+		t.Fatalf("rollback called %d times, want 1", injector.rolled.Load())
 	}
 	if !rep.Verdict.Pass {
 		t.Fatalf("expected pass, reasons: %v", rep.Verdict.Reasons)
 	}
-	if len(rep.KilledPods) != 1 || rep.KilledPods[0] != "p1" {
-		t.Fatalf("killed pods = %v, want [p1]", rep.KilledPods)
+	if len(rep.Affected) != 1 || rep.Affected[0] != "p1" {
+		t.Fatalf("affected = %v, want [p1]", rep.Affected)
 	}
 	if rep.FaultWindow.Total == 0 {
 		t.Fatal("expected requests recorded during the fault window")
@@ -67,7 +76,7 @@ func TestExecuteFailsAgainstBrokenServer(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	rep, err := execute(context.Background(), discardLog(), testExperiment(ts.URL), &fakeKiller{names: []string{"p1"}})
+	rep, err := execute(context.Background(), discardLog(), testExperiment(ts.URL), &fakeInjector{names: []string{"p1"}})
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}

@@ -31,7 +31,7 @@ type Report struct {
 	Experiment      string          `json:"experiment"`
 	StartedAt       string          `json:"started_at"`
 	Fault           string          `json:"fault"`
-	KilledPods      []string        `json:"killed_pods"`
+	Affected        []string        `json:"affected"`
 	Thresholds      Thresholds      `json:"thresholds"`
 	Baseline        metrics.Summary `json:"baseline"`
 	FaultWindow     metrics.Summary `json:"fault_window"`
@@ -72,7 +72,7 @@ func (r Report) Human() string {
 	}
 	b := &strings.Builder{}
 	fmt.Fprintf(b, "Experiment: %s\n", r.Experiment)
-	fmt.Fprintf(b, "Fault:      %s  killed=[%s]\n", r.Fault, strings.Join(r.KilledPods, ", "))
+	fmt.Fprintf(b, "Fault:      %s  affected=[%s]\n", r.Fault, strings.Join(r.Affected, ", "))
 	fmt.Fprintf(b, "Baseline:   %s\n", r.Baseline.String())
 	fmt.Fprintf(b, "Fault win:  %s\n", r.FaultWindow.String())
 	fmt.Fprintf(b, "Recovery:   %.1fs (recovered=%v)\n", r.RecoverySeconds, r.Recovered)

@@ -38,7 +38,7 @@ jobs:
         run: go build ./...
 
   integration:
-    name: integration (kind deploy + baseline)
+    name: integration (kind deploy + experiments)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -81,6 +81,9 @@ jobs:
       - name: Run pod-kill resilience experiment
         run: go run ./cmd/harness run -experiment experiments/pod-kill.yaml -out results/pod-kill.json
 
+      - name: Run node-drain resilience experiment
+        run: go run ./cmd/harness run -experiment experiments/node-drain.yaml -out results/node-drain.json
+
       - name: Upload reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -89,6 +92,7 @@ jobs:
           path: |
             results/baseline.json
             results/pod-kill.json
+            results/node-drain.json
           if-no-files-found: warn
 
       - name: Cluster down

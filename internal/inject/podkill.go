@@ -1,5 +1,3 @@
-// Package inject implements fault injectors. M2 ships pod-kill; node-drain and
-// network faults follow in M3.
 package inject
 
 import (
@@ -11,22 +9,24 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
-// PodKiller deletes pods matching a label selector in a namespace. It depends
-// only on kubernetes.Interface, so tests drive it with a fake clientset.
+// PodKiller deletes up to count pods matching a label selector in a namespace.
+// It depends only on kubernetes.Interface, so tests drive it with a fake
+// clientset.
 type PodKiller struct {
 	client    kubernetes.Interface
 	namespace string
 	selector  string
+	count     int
 }
 
-// NewPodKiller constructs a PodKiller.
-func NewPodKiller(client kubernetes.Interface, namespace, selector string) *PodKiller {
-	return &PodKiller{client: client, namespace: namespace, selector: selector}
+// NewPodKiller constructs a PodKiller that deletes count pods per injection.
+func NewPodKiller(client kubernetes.Interface, namespace, selector string, count int) *PodKiller {
+	return &PodKiller{client: client, namespace: namespace, selector: selector, count: count}
 }
 
-// Kill deletes up to count pods matching the selector (chosen at random among
+// Inject deletes up to count pods matching the selector (chosen at random among
 // pods that are not already terminating) and returns the names it deleted.
-func (p *PodKiller) Kill(ctx context.Context, count int) ([]string, error) {
+func (p *PodKiller) Inject(ctx context.Context) ([]string, error) {
 	pods, err := p.client.CoreV1().Pods(p.namespace).List(ctx, metav1.ListOptions{LabelSelector: p.selector})
 	if err != nil {
 		return nil, fmt.Errorf("list pods (ns=%s selector=%q): %w", p.namespace, p.selector, err)
@@ -43,6 +43,7 @@ func (p *PodKiller) Kill(ctx context.Context, count int) ([]string, error) {
 	}
 
 	rand.Shuffle(len(candidates), func(i, j int) { candidates[i], candidates[j] = candidates[j], candidates[i] })
+	count := p.count
 	if count > len(candidates) {
 		count = len(candidates)
 	}
@@ -56,3 +57,6 @@ func (p *PodKiller) Kill(ctx context.Context, count int) ([]string, error) {
 	}
 	return killed, nil
 }
+
+// Rollback is a no-op: the Deployment recreates the killed pods on its own.
+func (*PodKiller) Rollback(context.Context) error { return nil }
