@@ -84,6 +84,9 @@ jobs:
       - name: Run node-drain resilience experiment
         run: go run ./cmd/harness run -experiment experiments/node-drain.yaml -out results/node-drain.json
 
+      - name: Run resource-pressure resilience experiment
+        run: go run ./cmd/harness run -experiment experiments/resource-pressure.yaml -out results/resource-pressure.json
+
       - name: Upload reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -93,6 +96,7 @@ jobs:
             results/baseline.json
             results/pod-kill.json
             results/node-drain.json
+            results/resource-pressure.json
           if-no-files-found: warn
 
       - name: Cluster down

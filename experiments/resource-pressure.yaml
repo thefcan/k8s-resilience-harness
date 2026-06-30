@@ -1,0 +1,36 @@
+# Schedule a CPU-hog on a node hosting testapp; the Service must stay within
+# steady state while its replicas there compete for CPU.
+#
+# Unlike pod-kill / node-drain (transient faults the system recovers *from*),
+# this pressure is sustained for the whole fault window: the hypothesis is that
+# the Service keeps serving — at a higher but still bounded latency — for as long
+# as the contention lasts. The hog is capped at half a CPU so it is safe to run
+# on a laptop or a small CI runner; the harness deletes it on rollback.
+name: testapp-resource-pressure
+description: Pin a bounded CPU-hog to a node hosting testapp; the Service must stay within steady state under the contention.
+
+# Base URL the harness drives load at (kind-published NodePort).
+target: http://localhost:30080
+
+probe:
+  path: /work
+  rps: 50
+  concurrency: 20
+  timeoutMs: 2000
+
+# Under sustained CPU contention we expect higher latency, so the p95 ceiling is
+# looser than the transient-fault experiments — but the Service must still serve
+# essentially every request.
+steadyState:
+  minSuccessRate: 0.95
+  maxP95Ms: 500
+
+fault:
+  type: resource-pressure
+  namespace: kresil
+  selector: app=testapp
+
+phases:
+  baselineSeconds: 5
+  faultSeconds: 25
+  recoveryTimeoutSeconds: 45

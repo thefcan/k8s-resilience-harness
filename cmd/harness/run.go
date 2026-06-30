@@ -98,6 +98,10 @@ func newInjector(client kubernetes.Interface, f experiment.Fault) (inject.Inject
 		return inject.NewPodKiller(client, f.Namespace, f.Selector, f.Count), nil
 	case experiment.FaultNodeDrain:
 		return inject.NewNodeDrainer(client, f.Namespace, f.Selector), nil
+	case experiment.FaultResourcePressure:
+		// Bounded on purpose: two busy-loops capped at half a CPU keep the hog
+		// portable across an 8-core laptop and a 2-core CI runner.
+		return inject.NewResourcePresser(client, f.Namespace, f.Selector, 2, "500m"), nil
 	default:
 		return nil, fmt.Errorf("unsupported fault type %q", f.Type)
 	}

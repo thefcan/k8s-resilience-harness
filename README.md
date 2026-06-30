@@ -22,15 +22,15 @@ so resilience becomes a CI gate rather than a hope.
 
 ## Status
 
-**Milestone M3 (in progress) — pluggable fault injectors; `pod-kill` + `node-drain` shipped.**
+**Milestone M3 (in progress) — pluggable fault injectors; `pod-kill` + `node-drain` + `resource-pressure` shipped.**
 
 The harness drives constant load at a multi-replica `testapp` (backed by a Redis
 StatefulSet) running in a local [`kind`](https://kind.sigs.k8s.io/) cluster,
-injects a fault via `client-go` (kill a random pod, or cordon a node hosting the
-workload and evict its pods), and judges the run against a declarative
-**steady-state hypothesis** — emitting a deterministic pass/fail verdict, a
-recovery time, and a JSON + human report. A violated hypothesis fails the process
-(and the CI build).
+injects a fault via `client-go` (kill a random pod, cordon a node hosting the
+workload and evict its pods, or pin a bounded CPU-hog onto the workload's node),
+and judges the run against a declarative **steady-state hypothesis** — emitting a
+deterministic pass/fail verdict, a recovery time, and a JSON + human report. A
+violated hypothesis fails the process (and the CI build).
 
 ```text
 M0  skeleton + kind cluster bring-up        ✅ done
@@ -38,7 +38,8 @@ M1  SUT + loadgen + baseline steady-state   ✅ done
 M2  pod-kill injector + verdict + report    ✅ done
 M3  more fault types                        🚧 in progress
     ├─ node-drain (cordon + evict)          ✅ done
-    └─ resource-pressure + network faults   ⬜ planned
+    ├─ resource-pressure (bounded CPU-hog)  ✅ done
+    └─ network faults (latency / partition) ⬜ planned
 M4  Prometheus metrics platform             ⬜ planned
 M5  scikit-learn anomaly analysis           ⬜ planned
 M6  polish: README, diagram, docs           ⬜ planned
@@ -79,8 +80,9 @@ make cluster-down
 Run `make help` to list all targets. To run an experiment directly:
 
 ```bash
-go run ./cmd/harness run -experiment experiments/pod-kill.yaml   -out results/pod-kill.json
-go run ./cmd/harness run -experiment experiments/node-drain.yaml -out results/node-drain.json
+go run ./cmd/harness run -experiment experiments/pod-kill.yaml          -out results/pod-kill.json
+go run ./cmd/harness run -experiment experiments/node-drain.yaml        -out results/node-drain.json
+go run ./cmd/harness run -experiment experiments/resource-pressure.yaml -out results/resource-pressure.json
 # exits non-zero if the steady-state hypothesis is violated
 ```
 
@@ -98,13 +100,14 @@ internal/
   metrics/            # success rate + latency percentiles (shared)
   experiment/         # declarative experiment model: parse + validate
   k8s/                # client-go clientset (in-cluster or kubeconfig)
-  inject/             # fault injectors — Injector iface: pod-kill, node-drain (client-go)
+  inject/             # fault injectors — Injector iface: pod-kill, node-drain, resource-pressure
   probe/              # in-fault prober + windowed metrics + recovery time
   report/             # verdict + JSON / human report
 deploy/base/          # kustomize: namespace, Redis StatefulSet, testapp Deployment
 experiments/
-  pod-kill.yaml       # declarative pod-kill experiment
-  node-drain.yaml     # declarative node-drain experiment (cordon + evict)
+  pod-kill.yaml          # declarative pod-kill experiment
+  node-drain.yaml        # declarative node-drain experiment (cordon + evict)
+  resource-pressure.yaml # declarative resource-pressure experiment (bounded CPU-hog)
 scripts/              # cluster-up/down, build-images, deploy, baseline
 results/              # run outputs (baseline.json, pod-kill.json, node-drain.json, ...)
 .github/workflows/    # CI: lint+test, integration (deploy + baseline + experiment)
@@ -113,13 +116,16 @@ results/              # run outputs (baseline.json, pod-kill.json, node-drain.js
 ## Architecture
 
 ```text
-   harness run ─┬─► probe ──(constant RPS, /work)─► NodePort :30080 ─► testapp ×3 ─► Redis
-                │                                   (kube-proxy LB)        ▲
-                ├─► inject (client-go) ── pod-kill | node-drain ───────────┘
-                │
-                └─► windowed metrics (baseline | fault) + recovery time
-                          │
-                          └─► verdict (PASS/FAIL) + results/<run>.json
+   harness run
+        │
+        ├─► probe ──(constant RPS, /work)─► NodePort :30080 ─► testapp ×3 ─► Redis
+        │                                   (kube-proxy LB)
+        ├─► inject (client-go):  pod-kill · node-drain · resource-pressure
+        │                        (acts on the testapp pods / their node)
+        │
+        └─► windowed metrics (baseline | fault) + recovery time
+                  │
+                  └─► verdict (PASS/FAIL) + results/<run>.json
 ```
 
 The same system on a live 3-node `kind` cluster — three `testapp` replicas
@@ -140,8 +146,12 @@ spread across two workers behind the Service, backed by a Redis StatefulSet:
   pods (rollback is a no-op; the Deployment recreates them). `node-drain` cordons
   one node hosting the workload and evicts *only the experiment's* pods from it via
   the Eviction API, then **uncordons on rollback** so repeated runs don't strand the
-  cluster. `topologySpread: ScheduleAnyway` lets evicted pods reschedule onto the
-  surviving worker. Both are unit-tested against a `client-go` fake clientset.
+  cluster (`topologySpread: ScheduleAnyway` lets evicted pods reschedule onto the
+  surviving worker). `resource-pressure` pins a **bounded CPU-hog** (capped at half a
+  CPU) onto a node hosting the workload so its replicas there compete for CPU, and
+  **deletes the hog on rollback**. All three are selector-scoped — they disrupt only
+  the experiment's own workload, never system or storage pods — and unit-tested
+  against a `client-go` fake clientset.
 - **`loadgen`** — paced ticker + bounded worker pool; in-flight requests are not
   cancelled when the duration elapses. Pool saturation is counted separately, so
   `achieved_rps` reflects requests actually sent, not ticks emitted.
@@ -206,19 +216,46 @@ The load-balanced Service routes around the evicted pod while it reschedules, so
 steady state holds throughout. After the run the harness uncordons the node, so
 the cluster is left exactly as it was found.
 
+### resource-pressure
+
+[`experiments/resource-pressure.yaml`](experiments/resource-pressure.yaml) is a
+*sustained* fault rather than a transient one: it pins a CPU-hog to a node hosting
+`testapp`, so the replicas there fight for CPU for the whole fault window. Because
+contention costs latency, the hypothesis loosens the p95 ceiling — while still
+demanding the Service serve essentially every request:
+
+```yaml
+fault:
+  type: resource-pressure
+  namespace: kresil
+  selector: app=testapp
+steadyState:
+  minSuccessRate: 0.95
+  maxP95Ms: 500          # looser than the transient faults — pressure costs latency
+```
+
+A real PASS run against the kind deployment (full data in
+[`results/resource-pressure.sample.json`](results/resource-pressure.sample.json)):
+
+![resource-pressure experiment report: PASS verdict, 100% success under CPU contention with raised tail latency](docs/img/resource-pressure.png)
+
+The hog is capped at half a CPU, so it stresses the node without destabilising the
+host running kind — visible above as tail latency climbing (p99 and max rise under
+the contention) while success rate holds. The harness deletes the hog on rollback.
+
 ## CI
 
 GitHub Actions runs two jobs on every push/PR:
 
 - **lint + unit tests** — `golangci-lint`, `go test -race ./...`, `go build`.
-  Unit tests cover the verdict logic, percentile math, the pod-kill and
-  node-drain injectors (via a `client-go` **fake clientset**), and the
+  Unit tests cover the verdict logic, percentile math, the pod-kill, node-drain
+  and resource-pressure injectors (via a `client-go` **fake clientset**), and the
   load/probe engines.
 - **integration (kind deploy + experiments)** — installs `kind`, builds and
   loads the image, deploys via the project's own scripts, measures the baseline
-  (**fails if success rate < 95%**), then runs the pod-kill **and** node-drain
-  experiments (**each fails the build if its steady-state hypothesis is
-  violated**). All reports are uploaded as artifacts.
+  (**fails if success rate < 95%**), then runs the pod-kill, node-drain **and**
+  resource-pressure experiments (**each fails the build if its steady-state
+  hypothesis is violated**). All reports are uploaded as artifacts.
 
 ## License
 

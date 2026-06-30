@@ -24,6 +24,9 @@ const (
 	// FaultNodeDrain cordons a node hosting the target workload and evicts the
 	// workload's pods from it, forcing them to reschedule elsewhere.
 	FaultNodeDrain FaultType = "node-drain"
+	// FaultResourcePressure schedules a bounded CPU-hog on a node hosting the
+	// target workload, forcing the workload to compete for CPU.
+	FaultResourcePressure FaultType = "resource-pressure"
 )
 
 // Experiment is a single declarative resilience experiment.
@@ -125,9 +128,9 @@ func (e *Experiment) Validate() error {
 		errs = append(errs, "target is required")
 	}
 	switch e.Fault.Type {
-	case FaultPodKill, FaultNodeDrain:
+	case FaultPodKill, FaultNodeDrain, FaultResourcePressure:
 	default:
-		errs = append(errs, fmt.Sprintf("unsupported fault type %q (supported: %q, %q)", e.Fault.Type, FaultPodKill, FaultNodeDrain))
+		errs = append(errs, fmt.Sprintf("unsupported fault type %q (supported: %q, %q, %q)", e.Fault.Type, FaultPodKill, FaultNodeDrain, FaultResourcePressure))
 	}
 	if strings.TrimSpace(e.Fault.Namespace) == "" {
 		errs = append(errs, "fault.namespace is required")

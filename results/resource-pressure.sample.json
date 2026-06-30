@@ -1,0 +1,43 @@
+{
+  "experiment": "testapp-resource-pressure",
+  "started_at": "2026-06-30T21:02:58Z",
+  "fault": "resource-pressure",
+  "affected": [
+    "testapp-c57f57cf4-26l4q",
+    "testapp-c57f57cf4-hfv98",
+    "testapp-c57f57cf4-jp9tr"
+  ],
+  "thresholds": {
+    "min_success_rate": 0.95,
+    "max_p95_ms": 500,
+    "recovery_timeout_seconds": 45
+  },
+  "baseline": {
+    "total": 250,
+    "succeeded": 250,
+    "failed": 0,
+    "success_rate": 1,
+    "p50_ms": 3.405209,
+    "p95_ms": 7.514709,
+    "p99_ms": 11.916,
+    "max_ms": 12.591042
+  },
+  "fault_window": {
+    "total": 1249,
+    "succeeded": 1249,
+    "failed": 0,
+    "success_rate": 1,
+    "p50_ms": 2.332583,
+    "p95_ms": 9.966084,
+    "p99_ms": 52.708958,
+    "max_ms": 292.729666
+  },
+  "recovery_seconds": 0,
+  "recovered": true,
+  "verdict": {
+    "pass": true,
+    "reasons": [
+      "all steady-state conditions held"
+    ]
+  }
+}
