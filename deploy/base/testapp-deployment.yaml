@@ -12,6 +12,12 @@ spec:
     metadata:
       labels:
         app: testapp
+      annotations:
+        # Opt this pod in to Prometheus scraping (M4); the in-cluster Prometheus
+        # keeps only pods carrying these annotations and scrapes /metrics:8080.
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
     spec:
       # Spread replicas across nodes so pod-kill (M2) and node-drain (M3) stay
       # meaningful — losing one node should not take out every replica.

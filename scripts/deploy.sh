@@ -14,5 +14,8 @@ kubectl -n "${NS}" rollout status statefulset/redis --timeout=120s
 echo "==> waiting for testapp to be ready"
 kubectl -n "${NS}" rollout status deployment/testapp --timeout=120s
 
+echo "==> waiting for prometheus to be ready"
+kubectl -n "${NS}" rollout status deployment/prometheus --timeout=120s
+
 echo "==> workloads:"
 kubectl -n "${NS}" get pods -o wide

@@ -49,7 +49,7 @@ func TestExecutePassesAgainstHealthyServer(t *testing.T) {
 	defer ts.Close()
 
 	injector := &fakeInjector{names: []string{"p1"}}
-	rep, err := execute(context.Background(), discardLog(), testExperiment(ts.URL), injector)
+	rep, err := execute(context.Background(), discardLog(), testExperiment(ts.URL), injector, "")
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestExecuteFailsAgainstBrokenServer(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	rep, err := execute(context.Background(), discardLog(), testExperiment(ts.URL), &fakeInjector{names: []string{"p1"}})
+	rep, err := execute(context.Background(), discardLog(), testExperiment(ts.URL), &fakeInjector{names: []string{"p1"}}, "")
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}

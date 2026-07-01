@@ -1,6 +1,6 @@
 {
   "experiment": "testapp-dependency-partition",
-  "started_at": "2026-06-30T21:50:49Z",
+  "started_at": "2026-07-01T18:26:56Z",
   "fault": "dependency-partition",
   "affected": [
     "redis"
@@ -15,28 +15,34 @@
     "succeeded": 250,
     "failed": 0,
     "success_rate": 1,
-    "p50_ms": 3.269959,
-    "p95_ms": 8.16725,
-    "p99_ms": 14.318751,
-    "max_ms": 21.895292
+    "p50_ms": 2.468833,
+    "p95_ms": 6.829542,
+    "p99_ms": 14.307625,
+    "max_ms": 38.729875
   },
   "fault_window": {
     "total": 1000,
-    "succeeded": 6,
-    "failed": 994,
-    "success_rate": 0.006,
-    "p50_ms": 2.633583,
-    "p95_ms": 5.868959,
-    "p99_ms": 5.868959,
-    "max_ms": 5.868959
+    "succeeded": 7,
+    "failed": 993,
+    "success_rate": 0.007,
+    "p50_ms": 2.534249,
+    "p95_ms": 2.887041,
+    "p99_ms": 2.887041,
+    "max_ms": 2.887041
   },
   "recovery_seconds": 20,
   "recovered": false,
   "verdict": {
     "pass": false,
     "reasons": [
-      "success rate 0.0060 \u003c required 0.9500",
+      "success rate 0.0070 \u003c required 0.9500",
       "system did not return to steady state within the observed window"
     ]
+  },
+  "server_view": {
+    "targets_up": 3,
+    "requests_served": 907.4890114415256,
+    "server_errors": 887.4881224341024,
+    "min_redis_up": 0
   }
 }

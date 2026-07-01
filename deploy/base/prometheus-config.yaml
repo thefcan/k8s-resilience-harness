@@ -1,0 +1,40 @@
+# Prometheus scrape config. A short 5s interval means a ~15s fault window is
+# covered by ~3 scrapes, enough to see server-side request/error/redis_up move
+# during the fault. Only pods that opt in via prometheus.io/scrape annotations
+# are scraped (just the testapp pods), and each pod is scraped individually
+# (role: pod) so per-pod counters stay meaningful.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: kresil
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 5s
+      evaluation_interval: 5s
+    scrape_configs:
+      - job_name: testapp
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names: [kresil]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: "true"
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+            target_label: __address__
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            regex: (.+)
+            target_label: __metrics_path__
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+          - source_labels: [__meta_kubernetes_pod_node_name]
+            target_label: node
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            target_label: app

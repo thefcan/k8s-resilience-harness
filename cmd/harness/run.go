@@ -18,12 +18,21 @@ import (
 	"github.com/thefcan/k8s-resilience-harness/internal/k8s"
 	"github.com/thefcan/k8s-resilience-harness/internal/logger"
 	"github.com/thefcan/k8s-resilience-harness/internal/probe"
+	"github.com/thefcan/k8s-resilience-harness/internal/prom"
 	"github.com/thefcan/k8s-resilience-harness/internal/report"
 )
 
 // recoveryBucket is the bin width used to detect when success rate returns to
 // steady state after the fault.
 const recoveryBucket = time.Second
+
+// promJob is the Prometheus job label the harness queries for server-side
+// metrics; it matches the scrape job in deploy/base/prometheus-config.yaml.
+const promJob = "testapp"
+
+// promSettleDelay lets Prometheus scrape the tail of the fault window (scrape
+// interval is 5s) before the harness queries the window's server-side metrics.
+const promSettleDelay = 7 * time.Second
 
 // runExperiment is the `harness run` subcommand: load an experiment, drive load,
 // inject the fault, and emit a steady-state verdict + report.
@@ -35,11 +44,13 @@ func runExperiment(args []string, stdout, stderr io.Writer) error {
 		kubeconfig string
 		outPath    string
 		logLevel   string
+		promURL    string
 	)
 	fs.StringVar(&expPath, "experiment", "", "path to the experiment YAML (required)")
 	fs.StringVar(&kubeconfig, "kubeconfig", "", "kubeconfig path (default: in-cluster or ~/.kube/config)")
 	fs.StringVar(&outPath, "out", "", "write the JSON report to this path (optional)")
 	fs.StringVar(&logLevel, "log-level", "info", "log level: debug|info|warn|error")
+	fs.StringVar(&promURL, "prometheus", "", "Prometheus base URL for server-side metrics, e.g. http://localhost:30090 (optional)")
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -73,7 +84,7 @@ func runExperiment(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	rep, err := execute(ctx, log, exp, injector)
+	rep, err := execute(ctx, log, exp, injector, promURL)
 	if err != nil {
 		return err
 	}
@@ -111,7 +122,7 @@ func newInjector(client kubernetes.Interface, f experiment.Fault) (inject.Inject
 
 // execute drives the probe through baseline -> fault -> observation, computes
 // per-window metrics + recovery, and builds the report.
-func execute(ctx context.Context, log *slog.Logger, exp *experiment.Experiment, injector inject.Injector) (report.Report, error) {
+func execute(ctx context.Context, log *slog.Logger, exp *experiment.Experiment, injector inject.Injector, promURL string) (report.Report, error) {
 	prober := probe.New(exp.TargetURL(), exp.Probe.RPS, exp.Probe.Concurrency, exp.Probe.Timeout())
 
 	probeCtx, cancelProbe := context.WithCancel(ctx)
@@ -164,7 +175,7 @@ func execute(ctx context.Context, log *slog.Logger, exp *experiment.Experiment, 
 	}
 	verdict := report.BuildVerdict(th, faultWindow, recovered, recoveryDur.Seconds())
 
-	return report.Report{
+	rep := report.Report{
 		Experiment:      exp.Name,
 		StartedAt:       startedAt.UTC().Format(time.RFC3339),
 		Fault:           string(exp.Fault.Type),
@@ -175,7 +186,36 @@ func execute(ctx context.Context, log *slog.Logger, exp *experiment.Experiment, 
 		RecoverySeconds: recoveryDur.Seconds(),
 		Recovered:       recovered,
 		Verdict:         verdict,
-	}, nil
+	}
+
+	// Optionally corroborate the client-side verdict with the server-side view
+	// from Prometheus. Best-effort: a failure here is logged, never fatal.
+	if promURL != "" {
+		if sv, svErr := collectServerView(ctx, log, promURL, faultEnd, exp.Phases.Fault()); svErr != nil {
+			log.Warn("server-side metrics unavailable; reporting client-side only", "err", svErr)
+		} else {
+			rep.ServerView = &sv
+		}
+	}
+
+	return rep, nil
+}
+
+// collectServerView waits for Prometheus to scrape the tail of the fault window,
+// then pulls the server-side view of that window. It is deliberately best-effort:
+// a failure never changes the verdict, which is grounded in the client-side probe.
+func collectServerView(ctx context.Context, log *slog.Logger, promURL string, faultEnd time.Time, window time.Duration) (prom.ServerView, error) {
+	log.Info("collecting server-side metrics", "prometheus", promURL, "settle", promSettleDelay.String())
+	if err := sleepCtx(ctx, promSettleDelay); err != nil {
+		return prom.ServerView{}, err
+	}
+	client, err := prom.NewClient(promURL)
+	if err != nil {
+		return prom.ServerView{}, err
+	}
+	qctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	return prom.CollectServerView(qctx, client, promJob, faultEnd, window)
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) error {

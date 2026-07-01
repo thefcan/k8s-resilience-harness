@@ -25,7 +25,7 @@ func newTestServer(t *testing.T) (*server, *miniredis.Miniredis) {
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rdb.Close() })
 
-	srv := &server{rdb: rdb, host: "test-pod", log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	srv := &server{rdb: rdb, host: "test-pod", log: slog.New(slog.NewTextHandler(io.Discard, nil)), metrics: newMetrics()}
 	srv.ready.Store(true)
 	return srv, mr
 }

@@ -8,6 +8,10 @@
 # the testapp Service from outside the cluster. Unlike `kubectl port-forward`,
 # a NodePort is load-balanced by kube-proxy across all ready endpoints and is
 # re-routed when a pod is killed — which is exactly what M2 needs.
+#
+# NodePort 30090 publishes the in-cluster Prometheus (M4) so the harness can
+# query server-side metrics for the fault window from outside the cluster,
+# the same way it drives load through 30080.
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 nodes:
@@ -15,6 +19,9 @@ nodes:
     extraPortMappings:
       - containerPort: 30080
         hostPort: 30080
+        protocol: TCP
+      - containerPort: 30090
+        hostPort: 30090
         protocol: TCP
   - role: worker
   - role: worker

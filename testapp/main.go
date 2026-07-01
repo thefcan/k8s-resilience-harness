@@ -53,7 +53,7 @@ func main() {
 	defer func() { _ = rdb.Close() }()
 
 	host, _ := os.Hostname()
-	srv := &server{rdb: rdb, host: host, log: log}
+	srv := &server{rdb: rdb, host: host, log: log, metrics: newMetrics()}
 	srv.ready.Store(true)
 
 	addr := ":" + getenv("PORT", "8080")
@@ -89,10 +89,11 @@ func main() {
 }
 
 type server struct {
-	rdb   *redis.Client
-	host  string
-	log   *slog.Logger
-	ready atomic.Bool
+	rdb     *redis.Client
+	host    string
+	log     *slog.Logger
+	metrics *metrics
+	ready   atomic.Bool
 }
 
 func (s *server) routes() http.Handler {
@@ -100,8 +101,9 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("GET /livez", s.livez)
 	mux.HandleFunc("GET /healthz", s.healthz)
 	mux.HandleFunc("GET /work", s.work)
+	mux.Handle("GET /metrics", s.metrics.handler())
 	mux.HandleFunc("GET /", s.root)
-	return mux
+	return s.metrics.instrument(mux)
 }
 
 // livez is liveness: the process is running. Independent of Redis by design.
@@ -118,7 +120,9 @@ func (s *server) healthz(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 1*time.Second)
 	defer cancel()
-	if err := s.rdb.Ping(ctx).Err(); err != nil {
+	err := s.rdb.Ping(ctx).Err()
+	s.metrics.setRedisUp(err == nil)
+	if err != nil {
 		s.log.Warn("readiness check failed", "error", err, "pod", s.host)
 		s.writeJSON(w, http.StatusServiceUnavailable, map[string]any{"status": "unavailable", "pod": s.host})
 		return
@@ -131,6 +135,7 @@ func (s *server) work(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
 	n, err := s.rdb.Incr(ctx, workCounterKey).Result()
+	s.metrics.setRedisUp(err == nil)
 	if err != nil {
 		s.log.Warn("work failed", "error", err, "pod", s.host)
 		s.writeJSON(w, http.StatusServiceUnavailable, map[string]any{"status": "error", "pod": s.host})
@@ -143,7 +148,7 @@ func (s *server) root(w http.ResponseWriter, _ *http.Request) {
 	s.writeJSON(w, http.StatusOK, map[string]any{
 		"service": "testapp",
 		"pod":     s.host,
-		"routes":  []string{"/livez", "/healthz", "/work"},
+		"routes":  []string{"/livez", "/healthz", "/work", "/metrics"},
 	})
 }
 

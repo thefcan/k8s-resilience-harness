@@ -64,6 +64,24 @@ jobs:
       - name: Deploy SUT (Redis + testapp)
         run: bash scripts/deploy.sh
 
+      # M4: prove the in-cluster Prometheus discovered and is scraping all three
+      # testapp replicas before the experiments rely on it for server-side metrics.
+      - name: Verify Prometheus is scraping the SUT (M4)
+        run: |
+          for i in $(seq 1 12); do
+            up=$(curl -sf 'http://localhost:30090/api/v1/query?query=count(up%7Bjob%3D%22testapp%22%7D%3D%3D1)' \
+                 | jq -r '.data.result[0].value[1] // "0"')
+            echo "attempt ${i}: testapp targets up = ${up}"
+            if [ "${up}" = "3" ]; then
+              echo "Prometheus is scraping all 3 testapp replicas"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::Prometheus did not report 3 healthy testapp targets"
+          curl -s 'http://localhost:30090/api/v1/targets' | jq '.data.activeTargets[] | {job: .labels.job, health, scrapeUrl}' || true
+          exit 1
+
       - name: Measure steady-state baseline
         env:
           RPS: "50"
@@ -79,19 +97,21 @@ jobs:
             || { echo "::error::baseline success_rate ${rate} < 0.95"; exit 1; }
 
       - name: Run pod-kill resilience experiment
-        run: go run ./cmd/harness run -experiment experiments/pod-kill.yaml -out results/pod-kill.json
+        run: go run ./cmd/harness run -experiment experiments/pod-kill.yaml -prometheus http://localhost:30090 -out results/pod-kill.json
 
       - name: Run node-drain resilience experiment
-        run: go run ./cmd/harness run -experiment experiments/node-drain.yaml -out results/node-drain.json
+        run: go run ./cmd/harness run -experiment experiments/node-drain.yaml -prometheus http://localhost:30090 -out results/node-drain.json
 
       - name: Run resource-pressure resilience experiment
-        run: go run ./cmd/harness run -experiment experiments/resource-pressure.yaml -out results/resource-pressure.json
+        run: go run ./cmd/harness run -experiment experiments/resource-pressure.yaml -prometheus http://localhost:30090 -out results/resource-pressure.json
 
       # Negative test, run last: cutting Redis is expected to violate steady state,
-      # so the harness MUST exit non-zero. If it exits 0 the gate is broken.
+      # so the harness MUST exit non-zero. If it exits 0 the gate is broken. The
+      # -prometheus flag also records the server-side view of the FAIL (redis_up
+      # collapsing to 0) alongside the client-side verdict.
       - name: Verify the harness FAILS a real partition (negative test)
         run: |
-          if go run ./cmd/harness run -experiment experiments/dependency-partition.yaml -out results/dependency-partition.json; then
+          if go run ./cmd/harness run -experiment experiments/dependency-partition.yaml -prometheus http://localhost:30090 -out results/dependency-partition.json; then
             echo "::error::dependency-partition unexpectedly PASSED — the steady-state gate did not fire"
             exit 1
           fi

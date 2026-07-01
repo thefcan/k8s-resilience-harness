@@ -1,11 +1,11 @@
 {
   "experiment": "testapp-resource-pressure",
-  "started_at": "2026-06-30T21:02:58Z",
+  "started_at": "2026-07-01T18:26:19Z",
   "fault": "resource-pressure",
   "affected": [
-    "testapp-c57f57cf4-26l4q",
-    "testapp-c57f57cf4-hfv98",
-    "testapp-c57f57cf4-jp9tr"
+    "testapp-5bc966c944-cjd96",
+    "testapp-5bc966c944-wjsvc",
+    "testapp-5bc966c944-zp6zw"
   ],
   "thresholds": {
     "min_success_rate": 0.95,
@@ -17,20 +17,20 @@
     "succeeded": 250,
     "failed": 0,
     "success_rate": 1,
-    "p50_ms": 3.405209,
-    "p95_ms": 7.514709,
-    "p99_ms": 11.916,
-    "max_ms": 12.591042
+    "p50_ms": 3.103,
+    "p95_ms": 8.101834,
+    "p99_ms": 15.355958,
+    "max_ms": 23.360417
   },
   "fault_window": {
     "total": 1249,
     "succeeded": 1249,
     "failed": 0,
     "success_rate": 1,
-    "p50_ms": 2.332583,
-    "p95_ms": 9.966084,
-    "p99_ms": 52.708958,
-    "max_ms": 292.729666
+    "p50_ms": 2.428125,
+    "p95_ms": 8.67375,
+    "p99_ms": 24.914958,
+    "max_ms": 136.517791
   },
   "recovery_seconds": 0,
   "recovered": true,
@@ -39,5 +39,11 @@
     "reasons": [
       "all steady-state conditions held"
     ]
+  },
+  "server_view": {
+    "targets_up": 3,
+    "requests_served": 1112.5519471487676,
+    "server_errors": 0,
+    "min_redis_up": 1
   }
 }

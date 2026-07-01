@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/thefcan/k8s-resilience-harness/internal/metrics"
+	"github.com/thefcan/k8s-resilience-harness/internal/prom"
 )
 
 // Thresholds are the steady-state conditions the fault window is judged against.
@@ -38,6 +39,10 @@ type Report struct {
 	RecoverySeconds float64         `json:"recovery_seconds"`
 	Recovered       bool            `json:"recovered"`
 	Verdict         Verdict         `json:"verdict"`
+	// ServerView is the optional Prometheus-scraped, server-side picture of the
+	// fault window (M4), present only when the run was given a Prometheus URL. It
+	// corroborates the client-side probe rather than driving the verdict.
+	ServerView *prom.ServerView `json:"server_view,omitempty"`
 }
 
 // BuildVerdict judges the fault-window metrics and recovery against the
@@ -76,6 +81,10 @@ func (r Report) Human() string {
 	fmt.Fprintf(b, "Baseline:   %s\n", r.Baseline.String())
 	fmt.Fprintf(b, "Fault win:  %s\n", r.FaultWindow.String())
 	fmt.Fprintf(b, "Recovery:   %.1fs (recovered=%v)\n", r.RecoverySeconds, r.Recovered)
+	if sv := r.ServerView; sv != nil {
+		fmt.Fprintf(b, "Server:     targets_up=%d served=%.0f 5xx=%.0f redis_up_min=%.0f (via Prometheus)\n",
+			sv.TargetsUp, sv.RequestsServed, sv.ServerErrors, sv.MinRedisUp)
+	}
 	fmt.Fprintf(b, "Verdict:    %s\n", status)
 	for _, reason := range r.Verdict.Reasons {
 		fmt.Fprintf(b, "  - %s\n", reason)

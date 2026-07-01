@@ -7,6 +7,10 @@ resources:
   - redis-statefulset.yaml
   - testapp-service.yaml
   - testapp-deployment.yaml
+  - prometheus-rbac.yaml
+  - prometheus-config.yaml
+  - prometheus-deployment.yaml
+  - prometheus-service.yaml
 
 # Metadata-only label (not added to selectors, which are immutable).
 labels:

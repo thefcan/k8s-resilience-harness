@@ -30,7 +30,7 @@ so resilience becomes a CI gate rather than a hope.
 
 ## Status
 
-**Milestone M3 (done) — four pluggable fault injectors across both the PASS and FAIL paths: `pod-kill`, `node-drain`, `resource-pressure`, `dependency-partition`.**
+**Milestone M4 (done) — four pluggable fault injectors across the PASS and FAIL paths, each run cross-checked against an in-cluster Prometheus: `pod-kill`, `node-drain`, `resource-pressure`, `dependency-partition`.**
 
 The harness drives constant load at a multi-replica `testapp` (backed by a Redis
 StatefulSet) running in a local [`kind`](https://kind.sigs.k8s.io/) cluster,
@@ -39,7 +39,9 @@ pods, pin a bounded CPU-hog onto the workload's node, or partition the workload
 from its datastore), and judges the run against a declarative **steady-state
 hypothesis** — emitting a deterministic pass/fail verdict, a recovery time, and a
 JSON + human report. A violated hypothesis fails the process (and the CI build) —
-exercised for real by the `dependency-partition` experiment.
+exercised for real by the `dependency-partition` experiment. Each run also queries
+an **in-cluster Prometheus** for the server-side view of the fault window, so the
+client-side verdict is corroborated by the cluster's own metrics (M4).
 
 ```text
 M0  skeleton + kind cluster bring-up        ✅ done
@@ -49,7 +51,9 @@ M3  more fault types                        ✅ done
     ├─ node-drain (cordon + evict)          ✅ done
     ├─ resource-pressure (bounded CPU-hog)  ✅ done
     └─ dependency-partition (the FAIL path) ✅ done
-M4  Prometheus metrics platform             ⬜ planned
+M4  Prometheus metrics platform             ✅ done
+    ├─ instrumented SUT (/metrics)          ✅ done
+    └─ server-side cross-check per run      ✅ done
 M5  scikit-learn anomaly analysis           ⬜ planned
 M6  polish: README, diagram, docs           ⬜ planned
 ```
@@ -99,6 +103,7 @@ go run ./cmd/harness run -experiment experiments/node-drain.yaml           -out 
 go run ./cmd/harness run -experiment experiments/resource-pressure.yaml    -out results/resource-pressure.json
 go run ./cmd/harness run -experiment experiments/dependency-partition.yaml -out results/dependency-partition.json
 # exits non-zero if the steady-state hypothesis is violated (dependency-partition does, by design)
+# add `-prometheus http://localhost:30090` to any run to record the server-side cross-check (M4)
 ```
 
 ---
@@ -107,7 +112,7 @@ go run ./cmd/harness run -experiment experiments/dependency-partition.yaml -out 
 
 ```text
 cmd/harness/          # harness CLI: `harness run -experiment <file>`
-testapp/              # SUT: multi-replica HTTP service (/livez, /healthz, /work) + Dockerfile
+testapp/              # SUT: multi-replica HTTP service (/livez, /healthz, /work, /metrics) + Dockerfile
 loadgen/              # constant-RPS load generator -> baseline report
 internal/
   buildinfo/          # version metadata (ldflags-stamped)
@@ -117,8 +122,9 @@ internal/
   k8s/                # client-go clientset (in-cluster or kubeconfig)
   inject/             # fault injectors — Injector iface: pod-kill, node-drain, resource-pressure, dependency-partition
   probe/              # in-fault prober + windowed metrics + recovery time
+  prom/               # Prometheus query client + server-side fault-window view (M4)
   report/             # verdict + JSON / human report
-deploy/base/          # kustomize: namespace, Redis StatefulSet, testapp Deployment
+deploy/base/          # kustomize: namespace, Redis StatefulSet, testapp Deployment, Prometheus
 experiments/
   pod-kill.yaml             # declarative pod-kill experiment
   node-drain.yaml           # declarative node-drain experiment (cordon + evict)
@@ -146,14 +152,17 @@ flowchart LR
     subgraph cluster["kind cluster — namespace kresil"]
         direction TB
         np(["NodePort :30080<br/>kube-proxy load-balances"])
-        app["testapp ×3 replicas"]
+        app["testapp ×3 replicas<br/>(/metrics)"]
         redis[("Redis<br/>StatefulSet")]
+        prom[["Prometheus<br/>:30090"]]
         np --> app --> redis
+        prom -.->|"scrape /metrics"| app
     end
 
     probe -->|"constant RPS"| np
     inject -.->|"kill · evict · cordon · hog"| app
     inject -.->|"scale → 0"| redis
+    verdict -->|"PromQL @ fault window"| prom
     verdict --> gate{{"non-zero exit if<br/>steady-state violated"}}
 ```
 
@@ -293,14 +302,39 @@ fault:
 A real run against the kind deployment (full data in
 [`results/dependency-partition.sample.json`](results/dependency-partition.sample.json)):
 
-![dependency-partition experiment report: FAIL verdict, success rate collapses to 0.6% with Redis gone](docs/img/dependency-partition.png)
+![dependency-partition experiment report: FAIL verdict, success rate collapses to 0.7% with Redis gone, confirmed server-side by redis_up_min=0](docs/img/dependency-partition.png)
 
-With Redis gone, `/work` can't complete: the success rate collapses to **0.6%**, the
+With Redis gone, `/work` can't complete: the success rate collapses to **0.7%**, the
 system never returns to steady state, and the harness emits a **FAIL** verdict and
 **exits non-zero** — which is exactly the point. CI runs this experiment as a
 *negative test* (it asserts the harness fails), so the steady-state gate is proven to
 actually fire. On rollback the harness scales Redis back to its original replica
-count, leaving the cluster as it was found.
+count, leaving the cluster as it was found. Note the `Server:` line above:
+Prometheus independently confirms the failure (`5xx=887`, `redis_up_min=0`) while
+`targets_up=3` shows testapp itself never crashed — a *dependency* outage, not an
+app crash.
+
+## Server-side cross-check (M4)
+
+The verdict above is grounded in the harness's own **client-side** probe. M4 adds an
+independent **server-side** view: the SUT is instrumented (`/metrics` via
+`prometheus/client_golang` — request counts by route/status, in-flight, and a
+`testapp_redis_up` gauge), an in-cluster **Prometheus** (a single lean pod, *not* the
+full kube-prometheus-stack — enough for this harness and fast/reproducible in CI)
+scrapes every replica, and after the fault window the harness runs **PromQL** against
+it (`internal/prom`) to pull the server's own picture of that window:
+
+```text
+Fault win:  requests=1000 ok=7 fail=993 success_rate=0.0070   ← client-side probe
+Server:     targets_up=3 served=907 5xx=887 redis_up_min=0    ← Prometheus (server-side)
+```
+
+The two agree independently — which is the point. `served` runs higher than the
+probe's count because Prometheus sees *every* route (including `/healthz` probes and
+`/metrics` scrapes), not just `/work`; what matters is that both views concur on the
+verdict. Enable it on any run with `-prometheus http://localhost:30090`; CI asserts
+Prometheus is scraping all three replicas before the experiments rely on it. Full
+numbers across all four faults are in [`docs/RESULTS.md`](docs/RESULTS.md#server-side-cross-check-m4--prometheus).
 
 ## CI
 
@@ -309,14 +343,17 @@ GitHub Actions runs two jobs on every push/PR:
 - **lint + unit tests** — `golangci-lint`, `go test -race ./...`, `go build`.
   Unit tests cover the verdict logic, percentile math, all four injectors —
   pod-kill, node-drain, resource-pressure and dependency-partition (via a
-  `client-go` **fake clientset**) — and the load/probe engines.
+  `client-go` **fake clientset**) — the PromQL result parsing (`internal/prom`),
+  the instrumented SUT's `/metrics`, and the load/probe engines.
 - **integration (kind deploy + experiments)** — installs `kind`, builds and
-  loads the image, deploys via the project's own scripts, measures the baseline
-  (**fails if success rate < 95%**), then runs the pod-kill, node-drain and
-  resource-pressure experiments (**each fails the build if its steady-state
-  hypothesis is violated**), and finally the dependency-partition experiment as a
-  **negative test** — the build fails unless the harness *correctly* reports a FAIL
-  and exits non-zero. All reports are uploaded as artifacts.
+  loads the image, deploys via the project's own scripts (Redis + testapp +
+  Prometheus), **asserts Prometheus is scraping all three replicas**, measures the
+  baseline (**fails if success rate < 95%**), then runs the pod-kill, node-drain
+  and resource-pressure experiments — each with `-prometheus` so the server-side
+  cross-check runs too — (**each fails the build if its steady-state hypothesis is
+  violated**), and finally the dependency-partition experiment as a **negative
+  test** — the build fails unless the harness *correctly* reports a FAIL and exits
+  non-zero. All reports are uploaded as artifacts.
 
 ## License
 

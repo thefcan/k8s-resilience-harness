@@ -1,0 +1,32 @@
+# Least-privilege RBAC for the in-cluster Prometheus: read-only discovery of
+# pods/endpoints/services so kubernetes_sd_configs can find the testapp pods to
+# scrape. Nothing here can mutate the cluster.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+  namespace: kresil
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kresil-prometheus
+rules:
+  - apiGroups: [""]
+    resources: [nodes, nodes/metrics, services, endpoints, pods]
+    verbs: [get, list, watch]
+  - nonResourceURLs: ["/metrics"]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kresil-prometheus
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kresil-prometheus
+subjects:
+  - kind: ServiceAccount
+    name: prometheus
+    namespace: kresil

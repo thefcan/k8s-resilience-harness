@@ -1,9 +1,9 @@
 {
   "experiment": "testapp-pod-kill",
-  "started_at": "2026-06-30T20:49:20Z",
+  "started_at": "2026-07-01T18:25:15Z",
   "fault": "pod-kill",
   "affected": [
-    "testapp-c57f57cf4-7jhxb"
+    "testapp-5bc966c944-9nbbc"
   ],
   "thresholds": {
     "min_success_rate": 0.95,
@@ -15,20 +15,20 @@
     "succeeded": 250,
     "failed": 0,
     "success_rate": 1,
-    "p50_ms": 3.380791,
-    "p95_ms": 10.249292,
-    "p99_ms": 14.357083,
-    "max_ms": 21.515959
+    "p50_ms": 3.045167,
+    "p95_ms": 6.122333,
+    "p99_ms": 17.508541,
+    "max_ms": 26.507542
   },
   "fault_window": {
-    "total": 750,
-    "succeeded": 750,
+    "total": 749,
+    "succeeded": 749,
     "failed": 0,
     "success_rate": 1,
-    "p50_ms": 3.295917,
-    "p95_ms": 10.838416,
-    "p99_ms": 18.076334,
-    "max_ms": 32.40175
+    "p50_ms": 3.291542,
+    "p95_ms": 7.396208,
+    "p99_ms": 15.183083,
+    "max_ms": 33.0515
   },
   "recovery_seconds": 0,
   "recovered": true,
@@ -37,5 +37,11 @@
     "reasons": [
       "all steady-state conditions held"
     ]
+  },
+  "server_view": {
+    "targets_up": 3,
+    "requests_served": 740.9266573342666,
+    "server_errors": 0,
+    "min_redis_up": 1
   }
 }

@@ -55,7 +55,7 @@ baseline: ## Drive loadgen at the Service, write results/baseline.json.
 
 .PHONY: experiment
 experiment: ## Run the pod-kill resilience experiment (writes results/pod-kill.json).
-	go run ./cmd/harness run -experiment experiments/pod-kill.yaml -out results/pod-kill.json
+	go run ./cmd/harness run -experiment experiments/pod-kill.yaml -prometheus http://localhost:30090 -out results/pod-kill.json
 
 .PHONY: demo
 demo: cluster-up images deploy baseline experiment ## cluster -> image -> deploy -> baseline -> experiment.
