@@ -1,9 +1,17 @@
 # k8s-resilience-harness
 
+[![CI](https://github.com/thefcan/k8s-resilience-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/thefcan/k8s-resilience-harness/actions/workflows/ci.yml)
+[![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](go.mod)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
 > A Kubernetes resilience/chaos testing harness in Go: inject controlled faults
 > into a system running on Kubernetes, check a **steady-state hypothesis**,
 > measure recovery, and report a deterministic pass/fail — with an ML-based
 > anomaly layer over accumulated runs.
+
+![A real pod-kill resilience experiment on a live kind cluster: the harness kills a testapp pod, measures the fault window, and emits a PASS verdict](docs/img/demo.gif)
+
+<sub>A **real** `pod-kill` experiment on a live `kind` cluster — kill a `testapp` pod, hold the steady-state hypothesis through the fault window, emit a **PASS** verdict. Recorded end-to-end with [`scripts/record-demo.sh`](scripts/record-demo.sh); no edits.</sub>
 
 This is a learning/portfolio project, built milestone by milestone. It does
 **not** claim production Kubernetes operations experience; it is an honest,
@@ -123,17 +131,30 @@ results/              # run outputs (baseline.json, pod-kill.json, node-drain.js
 
 ## Architecture
 
-```text
-   harness run
-        │
-        ├─► probe ──(constant RPS, /work)─► NodePort :30080 ─► testapp ×3 ─► Redis
-        │                                   (kube-proxy LB)
-        ├─► inject (client-go):  pod-kill · node-drain · resource-pressure · dependency-partition
-        │                        (disrupts the testapp pods, their node, or the Redis dependency)
-        │
-        └─► windowed metrics (baseline | fault) + recovery time
-                  │
-                  └─► verdict (PASS/FAIL) + results/<run>.json
+```mermaid
+flowchart LR
+    subgraph orch["harness run — orchestrator"]
+        direction TB
+        probe["probe<br/>constant-RPS load → /work"]
+        metrics["windowed metrics<br/>baseline vs fault + recovery time"]
+        verdict["verdict<br/>PASS / FAIL"]
+        probe --> metrics --> verdict
+    end
+
+    inject["inject · client-go<br/>pod-kill · node-drain<br/>resource-pressure<br/>dependency-partition"]
+
+    subgraph cluster["kind cluster — namespace kresil"]
+        direction TB
+        np(["NodePort :30080<br/>kube-proxy load-balances"])
+        app["testapp ×3 replicas"]
+        redis[("Redis<br/>StatefulSet")]
+        np --> app --> redis
+    end
+
+    probe -->|"constant RPS"| np
+    inject -.->|"kill · evict · cordon · hog"| app
+    inject -.->|"scale → 0"| redis
+    verdict --> gate{{"non-zero exit if<br/>steady-state violated"}}
 ```
 
 The same system on a live 3-node `kind` cluster — three `testapp` replicas
