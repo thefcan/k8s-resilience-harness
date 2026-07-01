@@ -46,6 +46,11 @@ M5  scikit-learn anomaly analysis           ⬜ planned
 M6  polish: README, diagram, docs           ⬜ planned
 ```
 
+📊 **Measured results & metrics** — real experiment outcomes across the PASS and
+FAIL paths, test coverage, and CI status are collected in
+[`docs/RESULTS.md`](docs/RESULTS.md). Every number there is reproduced by
+`make demo` and by CI on every push.
+
 ---
 
 ## Requirements

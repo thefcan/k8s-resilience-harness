@@ -1,6 +1,9 @@
 package report
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -67,5 +70,48 @@ func TestHumanContainsVerdict(t *testing.T) {
 	}
 	if !strings.Contains(r.Human(), "PASS") {
 		t.Fatalf("human report missing verdict:\n%s", r.Human())
+	}
+}
+
+func TestWriteRoundTripsReportAsJSON(t *testing.T) {
+	fw := metrics.Summary{Total: 100, Succeeded: 99, SuccessRate: 0.99, P95ms: 42}
+	want := Report{
+		Experiment:      "roundtrip",
+		Fault:           "node-drain",
+		Affected:        []string{"testapp-1", "testapp-2"},
+		Thresholds:      thresholds,
+		FaultWindow:     fw,
+		RecoverySeconds: 1.5,
+		Recovered:       true,
+		Verdict:         BuildVerdict(thresholds, fw, true, 1.5),
+	}
+	// A nested path exercises the MkdirAll branch.
+	path := filepath.Join(t.TempDir(), "nested", "run.json")
+	if err := Write(path, want); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if len(data) == 0 || data[len(data)-1] != '\n' {
+		t.Error("written report should end with a trailing newline")
+	}
+	var got Report
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal written report: %v", err)
+	}
+	if got.Experiment != want.Experiment || got.Fault != want.Fault {
+		t.Errorf("round-trip mismatch: got %q/%q, want %q/%q", got.Experiment, got.Fault, want.Experiment, want.Fault)
+	}
+	if len(got.Affected) != 2 || got.Affected[0] != "testapp-1" {
+		t.Errorf("affected did not round-trip: %v", got.Affected)
+	}
+	if got.Verdict.Pass != want.Verdict.Pass {
+		t.Errorf("verdict did not round-trip: got %v, want %v", got.Verdict.Pass, want.Verdict.Pass)
+	}
+	if got.FaultWindow.SuccessRate != want.FaultWindow.SuccessRate {
+		t.Errorf("fault-window metrics did not round-trip: got %v, want %v", got.FaultWindow.SuccessRate, want.FaultWindow.SuccessRate)
 	}
 }
